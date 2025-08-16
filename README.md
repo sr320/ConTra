@@ -52,6 +52,13 @@ cd ConTra
 pip install -r code/requirements.txt
 ```
 
+or 
+
+``` bash
+python3 -m pip install -r code/requirements.txt
+```
+
+
 ## 📊 Usage
 
 ### Data Format
