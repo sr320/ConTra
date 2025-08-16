@@ -4,8 +4,8 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Contributions
 Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](CONTRIBUTING.md)
-[![Issues](https://img.shields.io/badge/issues-open-orange.svg)](https://github.com/yourusername/ConTra/issues)
-[![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/yourusername/ConTra/pulls)
+[![Issues](https://img.shields.io/badge/issues-open-orange.svg)](https://github.com/sr320/ConTra/issues)
+[![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/sr320/ConTra/pulls)
 
 **ConTra** is a high-performance Python framework for identifying
 context-dependent regulatory interactions in multi-omics data. It
