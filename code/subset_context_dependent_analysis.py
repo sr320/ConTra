@@ -36,7 +36,14 @@ import time
 import base64
 from datetime import datetime
 from typing import Dict, List, Tuple, Any
+
+# FIXED: Ensure pandas is available for NaN handling
+import pandas as pd
 warnings.filterwarnings('ignore')
+
+# FIXED: Configure matplotlib for headless environments
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for headless environments
 
 # Set plotting style
 plt.style.use('seaborn-v0_8')
@@ -114,8 +121,8 @@ class OptimizedContextDependentRegulationAnalysis:
         self._precompute_data_arrays()
         
     def _precompute_data_arrays(self):
-        """Pre-compute numpy arrays and correlation matrices for memory efficiency."""
-        print("🔢 Pre-computing data arrays and correlation matrices...")
+        """Pre-compute numpy arrays for memory efficiency."""
+        print("🔢 Pre-computing data arrays...")
         
         # Convert to numpy arrays for faster operations
         self.gene_array = self.datasets['gene'].values
@@ -123,15 +130,10 @@ class OptimizedContextDependentRegulationAnalysis:
         self.mirna_array = self.datasets['mirna'].values
         self.methylation_array = self.datasets['methylation'].values
         
-        # Pre-compute sample correlations (vectorized)
-        self.sample_correlations = {}
-        for data_type, data_array in [('gene', self.gene_array), ('lncrna', self.lncrna_array), 
-                                     ('mirna', self.mirna_array), ('methylation', self.methylation_array)]:
-            # Vectorized correlation calculation
-            corr_matrix = np.corrcoef(data_array.T)
-            self.sample_correlations[data_type] = corr_matrix
-            
-        print("✅ Data arrays and correlation matrices pre-computed")
+        # FIXED: Remove unused huge correlation matrices to save memory
+        # These were computed but never used in the analysis
+        
+        print("✅ Data arrays pre-computed (correlation matrices removed)")
         
     def verify_sample_alignment(self):
         """Verify that all datasets have the same sample structure."""
@@ -310,14 +312,38 @@ class OptimizedContextDependentRegulationAnalysis:
             improvement_from_regulator2 = r2_2 - r2_1
             improvement_from_interaction = r2_3 - r2_2
             
-            # Determine context dependence
-            context_dependent = improvement_from_interaction > 0.1
+            # FIXED: Use proper statistical testing instead of arbitrary R^2 threshold
+            # Perform nested F-test to compare models with and without interaction
+            from sklearn.metrics import r2_score
+            from scipy import stats
+            
+            # Calculate F-statistic for nested model comparison
+            n_samples = len(data_scaled)
+            df1 = 1  # Additional parameter in full model
+            df2 = n_samples - 4  # Degrees of freedom for full model (4 parameters)
+            
+            # FIXED: Add proper error handling for edge cases
+            if (df2 > 0 and 
+                improvement_from_interaction > 0 and 
+                r2_3 < 1.0 and  # Prevent division by zero when R² = 1
+                (1 - r2_3) > 1e-10):  # Prevent division by very small numbers
+                try:
+                    f_stat = (improvement_from_interaction / df1) / ((1 - r2_3) / df2)
+                    p_value = 1 - stats.f.cdf(f_stat, df1, df2)
+                    context_dependent = p_value < 0.05  # Use p-value threshold
+                except (ZeroDivisionError, ValueError, RuntimeWarning):
+                    # Handle any numerical errors gracefully
+                    context_dependent = False
+                    p_value = 1.0
+            else:
+                context_dependent = False
+                p_value = 1.0
             
             # Calculate conditional correlations (vectorized)
             high_mirna_mask = data_scaled['regulator2'] > 0.5
             low_mirna_mask = data_scaled['regulator2'] < -0.5
             
-            if high_mirna_mask.sum() > 5 and low_mirna_mask.sum() > 5:
+            if high_mirna_mask.sum() > 2 and low_mirna_mask.sum() > 2:
                 corr_high_mirna, pval_high = pearsonr(
                     data_scaled.loc[high_mirna_mask, 'target'],
                     data_scaled.loc[high_mirna_mask, 'regulator1']
@@ -330,6 +356,13 @@ class OptimizedContextDependentRegulationAnalysis:
                 context_strength = abs(corr_high_mirna - corr_low_mirna)
             else:
                 corr_high_mirna = corr_low_mirna = context_strength = np.nan
+            
+            # FIXED: Handle NaN values in context direction
+            if pd.isna(corr_high_mirna) or pd.isna(corr_low_mirna):
+                context_direction = 'NA'
+                context_strength = np.nan
+            else:
+                context_direction = 'positive' if corr_high_mirna > corr_low_mirna else 'negative'
             
             return {
                 'interaction_type': 'methylation_mirna',
@@ -345,7 +378,8 @@ class OptimizedContextDependentRegulationAnalysis:
                 'corr_high_regulator2': corr_high_mirna,
                 'corr_low_regulator2': corr_low_mirna,
                 'context_strength': context_strength,
-                'context_direction': 'positive' if corr_high_mirna > corr_low_mirna else 'negative'
+                'context_direction': context_direction,
+                'interaction_p_value': p_value
             }
             
         except Exception as e:
@@ -459,14 +493,38 @@ class OptimizedContextDependentRegulationAnalysis:
             improvement_from_regulator2 = r2_2 - r2_1
             improvement_from_interaction = r2_3 - r2_2
             
-            # Determine context dependence
-            context_dependent = improvement_from_interaction > 0.1
+            # FIXED: Use proper statistical testing instead of arbitrary R^2 threshold
+            # Perform nested F-test to compare models with and without interaction
+            from sklearn.metrics import r2_score
+            from scipy import stats
+            
+            # Calculate F-statistic for nested model comparison
+            n_samples = len(data_scaled)
+            df1 = 1  # Additional parameter in full model
+            df2 = n_samples - 4  # Degrees of freedom for full model (4 parameters)
+            
+            # FIXED: Add proper error handling for edge cases
+            if (df2 > 0 and 
+                improvement_from_interaction > 0 and 
+                r2_3 < 1.0 and  # Prevent division by zero when R² = 1
+                (1 - r2_3) > 1e-10):  # Prevent division by very small numbers
+                try:
+                    f_stat = (improvement_from_interaction / df1) / ((1 - r2_3) / df2)
+                    p_value = 1 - stats.f.cdf(f_stat, df1, df2)
+                    context_dependent = p_value < 0.05  # Use p-value threshold
+                except (ZeroDivisionError, ValueError, RuntimeWarning):
+                    # Handle any numerical errors gracefully
+                    context_dependent = False
+                    p_value = 1.0
+            else:
+                context_dependent = False
+                p_value = 1.0
             
             # Calculate conditional correlations (vectorized)
             high_mirna_mask = data_scaled['regulator2'] > 0.5
             low_mirna_mask = data_scaled['regulator2'] < -0.5
             
-            if high_mirna_mask.sum() > 5 and low_mirna_mask.sum() > 5:
+            if high_mirna_mask.sum() > 2 and low_mirna_mask.sum() > 2:
                 corr_high_mirna, pval_high = pearsonr(
                     data_scaled.loc[high_mirna_mask, 'target'],
                     data_scaled.loc[high_mirna_mask, 'regulator1']
@@ -479,6 +537,13 @@ class OptimizedContextDependentRegulationAnalysis:
                 context_strength = abs(corr_high_mirna - corr_low_mirna)
             else:
                 corr_high_mirna = corr_low_mirna = context_strength = np.nan
+            
+            # FIXED: Handle NaN values in context direction
+            if pd.isna(corr_high_mirna) or pd.isna(corr_low_mirna):
+                context_direction = 'NA'
+                context_strength = np.nan
+            else:
+                context_direction = 'positive' if corr_high_mirna > corr_low_mirna else 'negative'
             
             return {
                 'interaction_type': 'lncrna_mirna',
@@ -494,7 +559,8 @@ class OptimizedContextDependentRegulationAnalysis:
                 'corr_high_regulator2': corr_high_mirna,
                 'corr_low_regulator2': corr_low_mirna,
                 'context_strength': context_strength,
-                'context_direction': 'positive' if corr_high_mirna > corr_low_mirna else 'negative'
+                'context_direction': context_direction,
+                'interaction_p_value': p_value
             }
             
         except Exception as e:
@@ -630,8 +696,32 @@ class OptimizedContextDependentRegulationAnalysis:
             # Calculate improvement
             improvement_from_regulators = r2_full - r2_base
             
-            # Determine significance
-            has_significant_interactions = improvement_from_regulators > 0.1
+            # FIXED: Use proper statistical testing instead of arbitrary R^2 threshold
+            # Perform nested F-test to compare base vs full model
+            from sklearn.metrics import r2_score
+            from scipy import stats
+            
+            # Calculate F-statistic for nested model comparison
+            n_samples = len(data_scaled)
+            df1 = len(regulators) - 1  # Additional parameters in full model
+            df2 = n_samples - len(regulators) - 1  # Degrees of freedom for full model
+            
+            # FIXED: Add proper error handling for edge cases
+            if (df2 > 0 and 
+                improvement_from_regulators > 0 and 
+                r2_full < 1.0 and  # Prevent division by zero when R² = 1
+                (1 - r2_full) > 1e-10):  # Prevent division by very small numbers
+                try:
+                    f_stat = (improvement_from_regulators / df1) / ((1 - r2_full) / df2)
+                    p_value = 1 - stats.f.cdf(f_stat, df1, df2)
+                    has_significant_interactions = p_value < 0.05  # Use p-value threshold
+                except (ZeroDivisionError, ValueError, RuntimeWarning):
+                    # Handle any numerical errors gracefully
+                    has_significant_interactions = False
+                    p_value = 1.0
+            else:
+                has_significant_interactions = False
+                p_value = 1.0
             
             return {
                 'gene': gene_name,
@@ -640,6 +730,7 @@ class OptimizedContextDependentRegulationAnalysis:
                 'r2_full_model': r2_full,
                 'improvement_from_regulators': improvement_from_regulators,
                 'has_significant_interactions': has_significant_interactions,
+                'interaction_p_value': p_value,
                 'regulator_types': list(regulators.keys())
             }
             
@@ -698,12 +789,31 @@ class OptimizedContextDependentRegulationAnalysis:
         n_genes = min(200, len(self.datasets['gene']))
         sampled_genes = np.random.choice(self.datasets['gene'].index, n_genes, replace=False)
         
-        # Get context mask based on miRNA levels (as proxy for context)
-        mirna_means = self.datasets['mirna'].mean(axis=1)
-        context_mask = mirna_means > threshold if threshold > 0 else mirna_means < threshold
+        # FIXED: Get context mask based on per-sample context variables, not features
+        if 'high_mirna' in context_name or 'low_mirna' in context_name:
+            # Sentinel miRNA approach: use first miRNA as context proxy
+            sentinel_mirna = self.datasets['mirna'].index[0]
+            mirna_values = self.datasets['mirna'].loc[sentinel_mirna].values
+            z_scores = StandardScaler().fit_transform(mirna_values.reshape(-1, 1)).ravel()
+            
+            if threshold > 0:  # high_mirna
+                context_mask = z_scores > threshold
+            else:  # low_mirna
+                context_mask = z_scores < abs(threshold)
+                
+        elif 'high_methylation' in context_name:
+            # FIXED: Implement methylation-based context
+            sentinel_cpg = self.datasets['methylation'].index[0]
+            meth_values = self.datasets['methylation'].loc[sentinel_cpg].values
+            z_scores = StandardScaler().fit_transform(meth_values.reshape(-1, 1)).ravel()
+            context_mask = z_scores > threshold
+            
+        else:
+            # Fallback: use time/treatment metadata if available
+            context_mask = np.ones(len(self.samples), dtype=bool)
         
         # Filter samples by context
-        context_samples = [col for i, col in enumerate(self.datasets['gene'].columns) if context_mask.iloc[i % len(context_mask)]]
+        context_samples = [col for i, col in enumerate(self.datasets['gene'].columns) if context_mask[i]]
         
         if len(context_samples) < 10:
             return context_networks  # Not enough samples for this context
@@ -799,125 +909,219 @@ class OptimizedContextDependentRegulationAnalysis:
         
     def plot_context_dependent_interactions(self):
         """Plot context-dependent interaction analysis."""
-        if 'context_dependent' not in self.results:
-            return
+        try:
+            if 'context_dependent' not in self.results:
+                print("    ⚠️  No context-dependent results available for plotting")
+                return
+                
+            # Create context-dependent interaction plots
+            fig, axes = plt.subplots(2, 2, figsize=(15, 12))
             
-        # Create context-dependent interaction plots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        
-        # Methylation-miRNA context
-        meth_mirna = self.results['context_dependent']['methylation_mirna_context']
-        if not meth_mirna.empty:
-            axes[0, 0].hist(meth_mirna['improvement_from_interaction'], bins=30, alpha=0.7, edgecolor='black')
-            axes[0, 0].set_title('Methylation-miRNA Context Interactions')
-            axes[0, 0].set_xlabel('Improvement from Interaction')
-            axes[0, 0].set_ylabel('Frequency')
-            axes[0, 0].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Significance threshold')
-            axes[0, 0].legend()
-        
-        # lncRNA-miRNA context
-        lncrna_mirna = self.results['context_dependent']['lncrna_mirna_context']
-        if not lncrna_mirna.empty:
-            axes[0, 1].hist(lncrna_mirna['improvement_from_interaction'], bins=30, alpha=0.7, edgecolor='black')
-            axes[0, 1].set_title('lncRNA-miRNA Context Interactions')
-            axes[0, 1].set_xlabel('Improvement from Interaction')
-            axes[0, 1].set_ylabel('Frequency')
-            axes[0, 1].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Significance threshold')
-            axes[0, 1].legend()
-        
-        # Context strength distributions
-        if not meth_mirna.empty:
-            axes[1, 0].hist(meth_mirna['context_strength'].dropna(), bins=30, alpha=0.7, edgecolor='black')
-            axes[1, 0].set_title('Methylation-miRNA Context Strength')
-            axes[1, 0].set_xlabel('Context Strength')
-            axes[1, 0].set_ylabel('Frequency')
-        
-        if not lncrna_mirna.empty:
-            axes[1, 1].hist(lncrna_mirna['context_strength'].dropna(), bins=30, alpha=0.7, edgecolor='black')
-            axes[1, 1].set_title('lncRNA-miRNA Context Strength')
-            axes[1, 1].set_xlabel('Context Strength')
-            axes[1, 1].set_ylabel('Frequency')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "context_dependent_interactions.png"), dpi=300, bbox_inches='tight')
-        plt.close()
+            # Methylation-miRNA context
+            meth_mirna = self.results['context_dependent'].get('methylation_mirna_context', pd.DataFrame())
+            if not meth_mirna.empty:
+                try:
+                    axes[0, 0].hist(meth_mirna['improvement_from_interaction'].dropna(), bins=30, alpha=0.7, edgecolor='black')
+                    axes[0, 0].set_title('Methylation-miRNA Context Interactions')
+                    axes[0, 0].set_xlabel('Improvement from Interaction')
+                    axes[0, 0].set_ylabel('Frequency')
+                    axes[0, 0].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Significance threshold')
+                    axes[0, 0].legend()
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting methylation-miRNA data: {e}")
+                    axes[0, 0].text(0.5, 0.5, 'Plot Error', ha='center', va='center', transform=axes[0, 0].transAxes)
+            
+            # lncRNA-miRNA context
+            lncrna_mirna = self.results['context_dependent'].get('lncrna_mirna_context', pd.DataFrame())
+            if not lncrna_mirna.empty:
+                try:
+                    axes[0, 1].hist(lncrna_mirna['improvement_from_interaction'].dropna(), bins=30, alpha=0.7, edgecolor='black')
+                    axes[0, 1].set_title('lncRNA-miRNA Context Interactions')
+                    axes[0, 1].set_xlabel('Improvement from Interaction')
+                    axes[0, 1].set_ylabel('Frequency')
+                    axes[0, 1].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Significance threshold')
+                    axes[0, 1].legend()
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting lncRNA-miRNA data: {e}")
+                    axes[0, 1].text(0.5, 0.5, 'Plot Error', ha='center', va='center', transform=axes[0, 1].transAxes)
+            
+            # Context strength distributions
+            if not meth_mirna.empty:
+                try:
+                    valid_strength = meth_mirna['context_strength'].dropna()
+                    if len(valid_strength) > 0:
+                        axes[1, 0].hist(valid_strength, bins=30, alpha=0.7, edgecolor='black')
+                        axes[1, 0].set_title('Methylation-miRNA Context Strength')
+                        axes[1, 0].set_xlabel('Context Strength')
+                        axes[1, 0].set_ylabel('Frequency')
+                    else:
+                        axes[1, 0].text(0.5, 0.5, 'No Data', ha='center', va='center', transform=axes[1, 0].transAxes)
+                        axes[1, 0].set_title('Methylation-miRNA Context Strength')
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting methylation context strength: {e}")
+                    axes[1, 0].text(0.5, 0.5, 'Plot Error', ha='center', va='center', transform=axes[1, 0].transAxes)
+            
+            if not lncrna_mirna.empty:
+                try:
+                    valid_strength = lncrna_mirna['context_strength'].dropna()
+                    if len(valid_strength) > 0:
+                        axes[1, 1].hist(valid_strength, bins=30, alpha=0.7, edgecolor='black')
+                        axes[1, 1].set_title('lncRNA-miRNA Context Strength')
+                        axes[1, 1].set_xlabel('Context Strength')
+                        axes[1, 1].set_ylabel('Frequency')
+                    else:
+                        axes[1, 1].text(0.5, 0.5, 'No Data', ha='center', va='center', transform=axes[1, 1].transAxes)
+                        axes[1, 1].set_title('lncRNA-miRNA Context Strength')
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting lncRNA context strength: {e}")
+                    axes[1, 1].text(0.5, 0.5, 'Plot Error', ha='center', va='center', transform=axes[1, 1].transAxes)
+            
+            plt.tight_layout()
+            
+            # FIXED: Add error handling for plot saving
+            try:
+                plot_path = os.path.join(self.plots_dir, "context_dependent_interactions.png")
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                print(f"    ✅ Saved context-dependent interactions plot: {plot_path}")
+            except Exception as e:
+                print(f"    ❌ Error saving plot: {e}")
+            finally:
+                plt.close()
+                
+        except Exception as e:
+            print(f"    ❌ Error in plot_context_dependent_interactions: {e}")
+            try:
+                plt.close('all')  # Close any open figures
+            except:
+                pass
         
     def plot_context_networks(self):
         """Plot context-specific regulatory networks."""
-        if 'context_dependent' not in self.results:
-            return
+        try:
+            if 'context_dependent' not in self.results:
+                print("    ⚠️  No context-dependent results available for plotting")
+                return
+                
+            context_networks = self.results['context_dependent'].get('context_networks', {})
+            if not context_networks:
+                print("    ⚠️  No context networks available for plotting")
+                return
+                
+            # Create context network plots
+            fig, axes = plt.subplots(2, 2, figsize=(15, 12))
             
-        context_networks = self.results['context_dependent']['context_networks']
-        if not context_networks:
-            return
+            contexts = list(context_networks.keys())
+            for i, context in enumerate(contexts[:4]):
+                try:
+                    if context in context_networks:
+                        network = context_networks[context]
+                        
+                        # Count regulatory relationships
+                        mirna_count = len(network.get('gene_mirna_correlations', []))
+                        lncrna_count = len(network.get('gene_lncrna_correlations', []))
+                        meth_count = len(network.get('gene_methylation_correlations', []))
+                        
+                        # Create bar plot
+                        categories = ['miRNA', 'lncRNA', 'Methylation']
+                        counts = [mirna_count, lncrna_count, meth_count]
+                        
+                        axes[i//2, i%2].bar(categories, counts, alpha=0.7, color=['blue', 'green', 'red'])
+                        axes[i//2, i%2].set_title(f'{context.replace("_", " ").title()} Network')
+                        axes[i//2, i%2].set_ylabel('Number of Regulatory Relationships')
+                        
+                        # Add value labels
+                        for j, count in enumerate(counts):
+                            axes[i//2, i%2].text(j, count + 1, str(count), ha='center', va='bottom', fontweight='bold')
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting {context} network: {e}")
+                    axes[i//2, i%2].text(0.5, 0.5, 'Plot Error', ha='center', va='center', transform=axes[i//2, i%2].transAxes)
+                    axes[i//2, i%2].set_title(f'{context.replace("_", " ").title()} Network')
             
-        # Create context network plots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        
-        contexts = list(context_networks.keys())
-        for i, context in enumerate(contexts[:4]):
-            if context in context_networks:
-                network = context_networks[context]
+            plt.tight_layout()
+            
+            # FIXED: Add error handling for plot saving
+            try:
+                plot_path = os.path.join(self.plots_dir, "context_networks.png")
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                print(f"    ✅ Saved context networks plot: {plot_path}")
+            except Exception as e:
+                print(f"    ❌ Error saving plot: {e}")
+            finally:
+                plt.close()
                 
-                # Count regulatory relationships
-                mirna_count = len(network.get('gene_mirna_correlations', []))
-                lncrna_count = len(network.get('gene_lncrna_correlations', []))
-                meth_count = len(network.get('gene_methylation_correlations', []))
-                
-                # Create bar plot
-                categories = ['miRNA', 'lncRNA', 'Methylation']
-                counts = [mirna_count, lncrna_count, meth_count]
-                
-                axes[i//2, i%2].bar(categories, counts, alpha=0.7, color=['blue', 'green', 'red'])
-                axes[i//2, i%2].set_title(f'{context.replace("_", " ").title()} Network')
-                axes[i//2, i%2].set_ylabel('Number of Regulatory Relationships')
-                
-                # Add value labels
-                for j, count in enumerate(counts):
-                    axes[i//2, i%2].text(j, count + 1, str(count), ha='center', va='bottom', fontweight='bold')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "context_networks.png"), dpi=300, bbox_inches='tight')
-        plt.close()
+        except Exception as e:
+            print(f"    ❌ Error in plot_context_networks: {e}")
+            try:
+                plt.close('all')  # Close any open figures
+            except:
+                pass
         
     def plot_interaction_improvements(self):
         """Plot interaction improvement distributions."""
-        if 'context_dependent' not in self.results:
-            return
+        try:
+            if 'context_dependent' not in self.results:
+                print("    ⚠️  No context-dependent results available for plotting")
+                return
+                
+            # Create improvement comparison plots
+            fig, axes = plt.subplots(1, 2, figsize=(15, 6))
             
-        # Create improvement comparison plots
-        fig, axes = plt.subplots(1, 2, figsize=(15, 6))
-        
-        # Compare improvements across interaction types
-        meth_mirna = self.results['context_dependent']['methylation_mirna_context']
-        lncrna_mirna = self.results['context_dependent']['lncrna_mirna_context']
-        
-        if not meth_mirna.empty and not lncrna_mirna.empty:
-            # Box plot comparison
-            data_to_plot = [
-                meth_mirna['improvement_from_interaction'].dropna(),
-                lncrna_mirna['improvement_from_interaction'].dropna()
-            ]
+            # Compare improvements across interaction types
+            meth_mirna = self.results['context_dependent'].get('methylation_mirna_context', pd.DataFrame())
+            lncrna_mirna = self.results['context_dependent'].get('lncrna_mirna_context', pd.DataFrame())
             
-            axes[0].boxplot(data_to_plot, labels=['Methylation-miRNA', 'lncRNA-miRNA'])
-            axes[0].set_title('Interaction Improvement Comparison')
-            axes[0].set_ylabel('Improvement from Interaction')
-            axes[0].grid(True, alpha=0.3)
+            if not meth_mirna.empty and not lncrna_mirna.empty:
+                try:
+                    # Box plot comparison
+                    data_to_plot = [
+                        meth_mirna['improvement_from_interaction'].dropna(),
+                        lncrna_mirna['improvement_from_interaction'].dropna()
+                    ]
+                    
+                    axes[0].boxplot(data_to_plot, labels=['Methylation-miRNA', 'lncRNA-miRNA'])
+                    axes[0].set_title('Interaction Improvement Comparison')
+                    axes[0].set_ylabel('Improvement from Interaction')
+                    axes[0].grid(True, alpha=0.3)
+                    
+                    # Context strength comparison
+                    data_to_plot = [
+                        meth_mirna['context_strength'].dropna(),
+                        lncrna_mirna['context_strength'].dropna()
+                    ]
+                    
+                    axes[1].boxplot(data_to_plot, labels=['Methylation-miRNA', 'lncRNA-miRNA'])
+                    axes[1].set_title('Context Strength Comparison')
+                    axes[1].set_ylabel('Context Strength')
+                    axes[1].grid(True, alpha=0.3)
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting interaction improvements: {e}")
+                    axes[0].text(0.5, 0.5, 'Plot Error', ha='center', va='center', transform=axes[0].transAxes)
+                    axes[1].text(0.5, 0.5, 'Plot Error', ha='center', va='center', transform=axes[1].transAxes)
+            else:
+                # Handle case where data is missing
+                axes[0].text(0.5, 0.5, 'No Data', ha='center', va='center', transform=axes[0].transAxes)
+                axes[1].text(0.5, 0.5, 'No Data', ha='center', va='center', transform=axes[1].transAxes)
+                axes[0].set_title('Interaction Improvement Comparison')
+                axes[1].set_title('Context Strength Comparison')
             
-            # Context strength comparison
-            data_to_plot = [
-                meth_mirna['context_strength'].dropna(),
-                lncrna_mirna['context_strength'].dropna()
-            ]
+            plt.tight_layout()
             
-            axes[1].boxplot(data_to_plot, labels=['Methylation-miRNA', 'lncRNA-miRNA'])
-            axes[1].set_title('Context Strength Comparison')
-            axes[1].set_ylabel('Context Strength')
-            axes[1].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "interaction_improvements.png"), dpi=300, bbox_inches='tight')
-        plt.close()
+            # FIXED: Add error handling for plot saving
+            try:
+                plot_path = os.path.join(self.plots_dir, "interaction_improvements.png")
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                print(f"    ✅ Saved interaction improvements plot: {plot_path}")
+            except Exception as e:
+                print(f"    ❌ Error saving plot: {e}")
+            finally:
+                plt.close()
+                
+        except Exception as e:
+            print(f"    ❌ Error in plot_interaction_improvements: {e}")
+            try:
+                plt.close('all')  # Close any open figures
+            except:
+                pass
         
     def save_context_results(self):
         """Save all context-dependent analysis results."""
@@ -972,7 +1176,7 @@ class OptimizedContextDependentRegulationAnalysis:
             f.write(f"- **Available RAM:** {self._get_available_ram():.1f} GB\n")
             f.write(f"- **Datasets Loaded:** {len(self.datasets)} data types\n")
             for data_type, data in self.datasets.items():
-                f.write(f"  - {data_type.capitalize()}: {data.shape[0]} samples × {data.shape[1]} features\n")
+                f.write(f"  - {data_type.capitalize()}: {data.shape[1]} samples × {data.shape[0]} features\n")
             f.write("\n")
             
             # Results Summary
@@ -991,6 +1195,7 @@ class OptimizedContextDependentRegulationAnalysis:
                     # Top interactions table
                     if len(meth_mirna) > 0:
                         f.write("#### Top 10 Methylation-miRNA Interactions\n\n")
+                        f.write("*This table shows genes whose regulation by DNA methylation is context-dependent on miRNA expression levels, indicating epigenetic-regulatory crosstalk.*\n\n")
                         top_interactions = meth_mirna.nlargest(10, 'improvement_from_interaction')
                         f.write("| Rank | Gene | Methylation | miRNA | Improvement | Context Strength |\n")
                         f.write("|------|------|-------------|-------|-------------|------------------|\n")
@@ -1013,6 +1218,7 @@ class OptimizedContextDependentRegulationAnalysis:
                     # Top interactions table
                     if len(lncrna_mirna) > 0:
                         f.write("#### Top 10 lncRNA-miRNA Interactions\n\n")
+                        f.write("*This table identifies genes whose lncRNA-mediated regulation varies depending on miRNA expression, revealing competitive endogenous RNA (ceRNA) network dynamics.*\n\n")
                         top_interactions = lncrna_mirna.nlargest(10, 'improvement_from_interaction')
                         f.write("| Rank | Gene | lncRNA | miRNA | Improvement | Context Strength |\n")
                         f.write("|------|------|--------|-------|-------------|------------------|\n")
@@ -1034,6 +1240,7 @@ class OptimizedContextDependentRegulationAnalysis:
                     # Top interactions table
                     if len(multi_way) > 0:
                         f.write("#### Top 10 Multi-Way Interactions\n\n")
+                        f.write("*This table shows genes with the most complex regulatory patterns, where multiple RNA and epigenetic factors coordinately influence gene expression.*\n\n")
                         top_interactions = multi_way.nlargest(10, 'improvement_from_regulators')
                         f.write("| Rank | Gene | Improvement | Significant Interactions |\n")
                         f.write("|------|------|-------------|------------------------|\n")
@@ -1052,19 +1259,11 @@ class OptimizedContextDependentRegulationAnalysis:
                 f.write("- An error occurred during analysis\n\n")
                 f.write("Please check the console output for any error messages.\n\n")
             
-            # Visualizations
-            f.write("## Visualizations\n\n")
-            f.write("The following plots were generated during the analysis:\n\n")
-            f.write("### 1. Context-Dependent Interactions\n")
-            f.write(f"![Context Dependent Interactions](plots/context_dependent_interactions.png)\n\n")
-            f.write("### 2. Context Networks\n")
-            f.write(f"![Context Networks](plots/context_networks.png)\n\n")
-            f.write("### 3. Interaction Improvements\n")
-            f.write(f"![Interaction Improvements](plots/interaction_improvements.png)\n\n")
             
             # Data Files
             f.write("## Data Files\n\n")
             f.write("The following data files were generated:\n\n")
+            f.write("These CSV files contain the detailed results of context-dependent regulatory analysis, including interaction statistics, p-values, context strengths, and regulatory relationships for each analyzed gene-regulator pair.\n\n")
             
             # List CSV files in tables directory
             if os.path.exists(self.tables_dir):
@@ -1341,7 +1540,7 @@ class OptimizedContextDependentRegulationAnalysis:
         # Generate markdown report
         self.generate_markdown_report()
         
-        # Generate HTML report
+        # Generate HTML report (without images)
         self.generate_html_report()
         
         # Print summary
