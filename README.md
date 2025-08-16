@@ -147,6 +147,18 @@ ConTra/
 └── README.md                             # This file
 ```
 
+### Script Differences
+
+**`context_dependent_analysis.py`** - **Full Analysis Pipeline**
+- Analyzes **ALL 36,084 genes** in the dataset
+- Comprehensive regulatory interaction analysis across all genes
+- Higher computational requirements but complete coverage
+
+**`subset_context_dependent_analysis.py`** - **Subset Analysis Tools**
+- Analyzes **500 genes** (randomly sampled from the full dataset)
+- Faster execution for testing and development
+- Lower computational requirements (~5 min on 48 cores)
+
 ## 🤝 Contributing
 
 We welcome contributions from the community! Whether you're a
