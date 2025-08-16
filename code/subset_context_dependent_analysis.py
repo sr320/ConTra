@@ -52,7 +52,11 @@ sns.set_palette("husl")
 class OptimizedContextDependentRegulationAnalysis:
     def __init__(self, data_dir="data/cleaned_datasets", n_jobs=None):
         """Initialize the optimized context-dependent analysis."""
-        self.data_dir = data_dir
+        # FIXED: Get workspace root directory (parent of code directory)
+        self.workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        # Set absolute paths relative to workspace root
+        self.data_dir = os.path.join(self.workspace_root, data_dir)
         self.datasets = {}
         self.results = {}
         
@@ -65,7 +69,7 @@ class OptimizedContextDependentRegulationAnalysis:
         # Create timestamped output directory
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         # FIXED: Create output directory in workspace root, not inside code directory
-        self.output_dir = f"output/subset_context_dependent_analysis_{self.timestamp}"
+        self.output_dir = os.path.join(self.workspace_root, f"output/subset_context_dependent_analysis_{self.timestamp}")
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Create subdirectories for different output types
