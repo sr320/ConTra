@@ -50,7 +50,7 @@ plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 
 class OptimizedContextDependentRegulationAnalysis:
-    def __init__(self, data_dir="../data/cleaned_datasets", n_jobs=None):
+    def __init__(self, data_dir="data/cleaned_datasets", n_jobs=None):
         """Initialize the optimized context-dependent analysis."""
         self.data_dir = data_dir
         self.datasets = {}
@@ -64,7 +64,8 @@ class OptimizedContextDependentRegulationAnalysis:
         
         # Create timestamped output directory
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.output_dir = f"../output/context_dependent_analysis_{self.timestamp}"
+        # FIXED: Create output directory in workspace root, not inside code directory
+        self.output_dir = f"output/context_dependent_analysis_{self.timestamp}"
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Create subdirectories for different output types
