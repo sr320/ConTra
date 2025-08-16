@@ -57,7 +57,7 @@ class OptimizedContextDependentRegulationAnalysis:
         
         # Create timestamped output directory
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.output_dir = f"../output/context_dependent_analysis_{self.timestamp}"
+        self.output_dir = f"../output/subset_context_dependent_analysis_{self.timestamp}"
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Create subdirectories for different output types
@@ -191,9 +191,9 @@ class OptimizedContextDependentRegulationAnalysis:
         """Analyze methylation-gene interactions dependent on miRNA levels using parallel processing."""
         print("  🔄 Parallel processing methylation-miRNA context analysis...")
         
-        # Analyze ALL genes in the dataset (full analysis)
-        n_genes = len(self.datasets['gene'])  # Use all 36,084 genes
-        sampled_genes = self.datasets['gene'].index  # Use all genes, not random sample
+        # Sample genes for analysis (can be increased with parallel processing)
+        n_genes = min(500, len(self.datasets['gene']))  # Increased from 100
+        sampled_genes = np.random.choice(self.datasets['gene'].index, n_genes, replace=False)
         
         # Split genes into chunks for parallel processing
         gene_chunks = np.array_split(sampled_genes, self.n_jobs)
@@ -235,17 +235,17 @@ class OptimizedContextDependentRegulationAnalysis:
             
             # Get top miRNAs for this gene (vectorized)
             mirna_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['mirna'], 'mirna', top_n=25
+                gene_expression, self.datasets['mirna'], 'mirna', top_n=10
             )
             
             # Get top methylation sites for this gene (vectorized)
             meth_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['methylation'], 'methylation', top_n=50
+                gene_expression, self.datasets['methylation'], 'methylation', top_n=10
             )
             
             # Analyze interactions for top regulators
-            for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:10]:
-                for meth_name, meth_corr, meth_pval in meth_corrs[:15]:
+            for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:5]:
+                for meth_name, meth_corr, meth_pval in meth_corrs[:5]:
                     interaction_result = self._analyze_methylation_mirna_interaction(
                         gene, gene_expression, mirna_name, meth_name
                     )
@@ -356,9 +356,9 @@ class OptimizedContextDependentRegulationAnalysis:
         """Analyze lncRNA-gene interactions dependent on miRNA levels using parallel processing."""
         print("  🔄 Parallel processing lncRNA-miRNA context analysis...")
         
-        # Analyze ALL genes in the dataset (full analysis)
-        n_genes = len(self.datasets['gene'])  # Use all 36,084 genes
-        sampled_genes = self.datasets['gene'].index  # Use all genes, not random sample
+        # Sample genes for analysis
+        n_genes = min(500, len(self.datasets['gene']))
+        sampled_genes = np.random.choice(self.datasets['gene'].index, n_genes, replace=False)
         
         # Split genes into chunks for parallel processing
         gene_chunks = np.array_split(sampled_genes, self.n_jobs)
@@ -400,17 +400,17 @@ class OptimizedContextDependentRegulationAnalysis:
             
             # Get top lncRNAs for this gene (vectorized)
             lncrna_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['lncrna'], 'lncrna', top_n=50
+                gene_expression, self.datasets['lncrna'], 'lncrna', top_n=10
             )
             
             # Get top miRNAs for this gene (vectorized)
             mirna_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['mirna'], 'mirna', top_n=25
+                gene_expression, self.datasets['mirna'], 'mirna', top_n=10
             )
             
             # Analyze interactions for top regulators
-            for lncrna_name, lncrna_corr, lncrna_pval in lncrna_corrs[:15]:
-                for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:10]:
+            for lncrna_name, lncrna_corr, lncrna_pval in lncrna_corrs[:5]:
+                for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:5]:
                     interaction_result = self._analyze_lncrna_mirna_interaction(
                         gene, gene_expression, lncrna_name, mirna_name
                     )
@@ -505,9 +505,9 @@ class OptimizedContextDependentRegulationAnalysis:
         """Analyze complex multi-way regulatory interactions using parallel processing."""
         print("  🔄 Parallel processing multi-way regulatory interactions...")
         
-        # Analyze ALL genes in the dataset (full analysis)
-        n_genes = len(self.datasets['gene'])  # Use all 36,084 genes
-        sampled_genes = self.datasets['gene'].index  # Use all genes, not random sample
+        # Sample genes for analysis (increased with parallel processing)
+        n_genes = min(200, len(self.datasets['gene']))  # Increased from 100
+        sampled_genes = np.random.choice(self.datasets['gene'].index, n_genes, replace=False)
         
         # Split genes into chunks for parallel processing
         gene_chunks = np.array_split(sampled_genes, self.n_jobs)
@@ -568,7 +568,7 @@ class OptimizedContextDependentRegulationAnalysis:
         # Get top miRNA regulators (vectorized)
         mirna_corrs = self._get_top_correlations_vectorized(
             self.datasets['gene'].loc[gene].values, 
-            self.datasets['mirna'], 'mirna', top_n=15
+            self.datasets['mirna'], 'mirna', top_n=n_regulators//3
         )
         
         for mirna_name, corr, pval in mirna_corrs:
@@ -577,7 +577,7 @@ class OptimizedContextDependentRegulationAnalysis:
         # Get top lncRNA regulators (vectorized)
         lncrna_corrs = self._get_top_correlations_vectorized(
             self.datasets['gene'].loc[gene].values, 
-            self.datasets['lncrna'], 'lncrna', top_n=30
+            self.datasets['lncrna'], 'lncrna', top_n=n_regulators//3
         )
         
         for lncrna_name, corr, pval in lncrna_corrs:
@@ -586,7 +586,7 @@ class OptimizedContextDependentRegulationAnalysis:
         # Get top methylation regulators (vectorized)
         meth_corrs = self._get_top_correlations_vectorized(
             self.datasets['gene'].loc[gene].values, 
-            self.datasets['methylation'], 'methylation', top_n=25
+            self.datasets['methylation'], 'methylation', top_n=n_regulators//3
         )
         
         for meth_name, corr, pval in meth_corrs:
@@ -694,9 +694,9 @@ class OptimizedContextDependentRegulationAnalysis:
             'gene_methylation_correlations': []
         }
         
-        # Analyze ALL genes in the dataset (full analysis)
-        n_genes = len(self.datasets['gene'])  # Use all 36,084 genes
-        sampled_genes = self.datasets['gene'].index  # Use all genes, not random sample
+        # Sample genes for analysis
+        n_genes = min(200, len(self.datasets['gene']))
+        sampled_genes = np.random.choice(self.datasets['gene'].index, n_genes, replace=False)
         
         # Get context mask based on miRNA levels (as proxy for context)
         mirna_means = self.datasets['mirna'].mean(axis=1)
@@ -950,17 +950,17 @@ class OptimizedContextDependentRegulationAnalysis:
         print("GENERATING MARKDOWN REPORT")
         print("="*60)
         
-        report_path = os.path.join(self.reports_dir, "context_dependent_analysis_report.md")
+        report_path = os.path.join(self.reports_dir, "subset_context_dependent_analysis_report.md")
         
         with open(report_path, 'w') as f:
             # Header
-            f.write("# Context-Dependent Regulation Analysis Report\n\n")
+            f.write("# Subset Context-Dependent Regulation Analysis Report\n\n")
             f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"**Analysis ID:** {self.timestamp}\n\n")
             
             # Executive Summary
             f.write("## Executive Summary\n\n")
-            f.write("This report presents the results of context-dependent regulatory interaction analysis between:\n")
+            f.write("This report presents the results of subset context-dependent regulatory interaction analysis between:\n")
             f.write("- Gene expression\n")
             f.write("- miRNA expression\n")
             f.write("- lncRNA expression\n")
@@ -1031,7 +1031,7 @@ class OptimizedContextDependentRegulationAnalysis:
                     f.write(f"- **Genes with significant interactions:** {multi_way['has_significant_interactions'].sum()}\n")
                     f.write(f"- **Mean improvement from interactions:** {multi_way['improvement_from_regulators'].mean():.3f}\n\n")
                     
-                    # Top multi-way interactions table
+                    # Top interactions table
                     if len(multi_way) > 0:
                         f.write("#### Top 10 Multi-Way Interactions\n\n")
                         top_interactions = multi_way.nlargest(10, 'improvement_from_regulators')
@@ -1085,7 +1085,7 @@ class OptimizedContextDependentRegulationAnalysis:
             
             # Conclusion
             f.write("## Conclusion\n\n")
-            f.write("This analysis successfully identified context-dependent regulatory interactions using optimized parallel processing.\n")
+            f.write("This subset analysis successfully identified context-dependent regulatory interactions using optimized parallel processing.\n")
             f.write("The results provide insights into how different regulatory layers interact in a context-specific manner.\n\n")
             
             # Footer
@@ -1093,179 +1093,6 @@ class OptimizedContextDependentRegulationAnalysis:
             f.write(f"*Report generated by OptimizedContextDependentRegulationAnalysis on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
         
         print(f"✅ Markdown report generated: {report_path}")
-        
-    def generate_html_report(self):
-        """Generate HTML report with embedded images."""
-        print("\n" + "="*60)
-        print("GENERATING HTML REPORT")
-        print("="*60)
-        
-        html_report_path = os.path.join(self.reports_dir, "context_dependent_analysis_report.html")
-        md_report_path = os.path.join(self.reports_dir, "context_dependent_analysis_report.md")
-        
-        # Read the markdown content
-        if not os.path.exists(md_report_path):
-            print("⚠️  Markdown report not found. Generate markdown report first.")
-            return
-            
-        with open(md_report_path, 'r') as f:
-            md_content = f.read()
-        
-        # Convert images to base64 and embed them
-        html_content = self._convert_md_to_html_with_embedded_images(md_content)
-        
-        # Write HTML report
-        with open(html_report_path, 'w') as f:
-            f.write(html_content)
-        
-        print(f"✅ HTML report generated: {html_report_path}")
-        
-    def _convert_md_to_html_with_embedded_images(self, md_content):
-        """Convert markdown to HTML with embedded base64 images."""
-        # Basic HTML structure
-        html_head = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Context-Dependent Regulation Analysis Report</title>
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 20px; }
-        h1, h2, h3, h4 { color: #333; }
-        h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
-        h2 { border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 30px; }
-        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f5f5f5; font-weight: bold; }
-        tr:nth-child(even) { background-color: #f9f9f9; }
-        img { max-width: 100%; height: auto; display: block; margin: 20px auto; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .warning { background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; padding: 10px; margin: 10px 0; }
-        code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 3px; }
-        pre { background-color: #f4f4f4; padding: 10px; border-radius: 5px; overflow-x: auto; }
-        ul { margin: 10px 0; }
-        li { margin: 5px 0; }
-    </style>
-</head>
-<body>"""
-        
-        html_footer = """</body>
-</html>"""
-        
-        # Convert markdown to HTML (simple conversion)
-        html_body = md_content
-        
-        # Convert headers
-        html_body = html_body.replace('#### ', '<h4>').replace('\n', '</h4>\n', html_body.count('#### '))
-        html_body = html_body.replace('### ', '<h3>').replace('\n', '</h3>\n', html_body.count('### '))
-        html_body = html_body.replace('## ', '<h2>').replace('\n', '</h2>\n', html_body.count('## '))
-        html_body = html_body.replace('# ', '<h1>').replace('\n', '</h1>\n', html_body.count('# '))
-        
-        # Convert bold text
-        import re
-        html_body = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html_body)
-        
-        # Convert lists
-        lines = html_body.split('\n')
-        in_list = False
-        result_lines = []
-        
-        for line in lines:
-            if line.strip().startswith('- '):
-                if not in_list:
-                    result_lines.append('<ul>')
-                    in_list = True
-                result_lines.append(f'<li>{line.strip()[2:]}</li>')
-            else:
-                if in_list:
-                    result_lines.append('</ul>')
-                    in_list = False
-                result_lines.append(line)
-        
-        if in_list:
-            result_lines.append('</ul>')
-            
-        html_body = '\n'.join(result_lines)
-        
-        # Convert paragraphs
-        paragraphs = html_body.split('\n\n')
-        html_paragraphs = []
-        for para in paragraphs:
-            para = para.strip()
-            if para and not para.startswith('<') and not para.startswith('|'):
-                html_paragraphs.append(f'<p>{para}</p>')
-            else:
-                html_paragraphs.append(para)
-        
-        html_body = '\n\n'.join(html_paragraphs)
-        
-        # Convert tables
-        table_lines = html_body.split('\n')
-        result_lines = []
-        in_table = False
-        
-        for i, line in enumerate(table_lines):
-            if '|' in line and line.strip().startswith('|'):
-                if not in_table:
-                    result_lines.append('<table>')
-                    in_table = True
-                
-                # Check if this is a header separator line
-                if '---' in line:
-                    continue
-                
-                # Process table row
-                cells = [cell.strip() for cell in line.split('|')[1:-1]]  # Remove empty first/last
-                if i < len(table_lines) - 1 and '---' in table_lines[i + 1]:
-                    # This is a header row
-                    row_html = '<tr>' + ''.join(f'<th>{cell}</th>' for cell in cells) + '</tr>'
-                else:
-                    # This is a data row
-                    row_html = '<tr>' + ''.join(f'<td>{cell}</td>' for cell in cells) + '</tr>'
-                
-                result_lines.append(row_html)
-            else:
-                if in_table:
-                    result_lines.append('</table>')
-                    in_table = False
-                result_lines.append(line)
-        
-        if in_table:
-            result_lines.append('</table>')
-            
-        html_body = '\n'.join(result_lines)
-        
-        # Convert images to embedded base64
-        image_pattern = r'!\[(.*?)\]\((.*?)\)'
-        
-        def replace_image(match):
-            alt_text = match.group(1)
-            image_path = match.group(2)
-            
-            # Convert relative path to absolute
-            if image_path.startswith('plots/'):
-                full_image_path = os.path.join(self.plots_dir, image_path.replace('plots/', ''))
-            else:
-                full_image_path = image_path
-            
-            if os.path.exists(full_image_path):
-                try:
-                    with open(full_image_path, 'rb') as img_file:
-                        img_data = img_file.read()
-                        img_base64 = base64.b64encode(img_data).decode('utf-8')
-                        return f'<img src="data:image/png;base64,{img_base64}" alt="{alt_text}" title="{alt_text}">'
-                except Exception as e:
-                    print(f"⚠️  Could not embed image {full_image_path}: {e}")
-                    return f'<p class="warning">⚠️ Image not found: {alt_text}</p>'
-            else:
-                return f'<p class="warning">⚠️ Image not found: {alt_text} ({image_path})</p>'
-        
-        html_body = re.sub(image_pattern, replace_image, html_body)
-        
-        # Handle warning messages
-        html_body = html_body.replace('⚠️', '<span class="warning">⚠️')
-        html_body = html_body.replace('**\n\n', '**</span>\n\n')
-        
-        return html_head + '\n' + html_body + '\n' + html_footer
         
     def print_context_summary(self):
         """Print summary of context-dependent analysis."""
