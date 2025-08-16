@@ -181,17 +181,7 @@ contribute:
 4.  **Push** to the branch (`git push origin feature/amazing-feature`)
 5.  **Open** a Pull Request
 
-### Areas for Contribution
 
--   **Algorithm Improvements**: Enhance statistical methods and analysis
-    pipelines
--   **Performance Optimization**: Improve parallel processing and memory
-    efficiency
--   **Documentation**: Expand tutorials, examples, and API documentation
--   **Testing**: Add unit tests and integration tests
--   **New Features**: Implement additional analysis methods or data
-    formats
--   **Bug Fixes**: Report and fix issues
 
 ## 📝 License
 
@@ -208,19 +198,11 @@ This project is licensed under the MIT License - see the
 ## 📞 Contact
 
 -   **Issues**: [GitHub
-    Issues](https://github.com/yourusername/ConTra/issues)
+    Issues](https://github.com/sr320/ConTra/issues)
 -   **Discussions**: [GitHub
-    Discussions](https://github.com/yourusername/ConTra/discussions)
+    Discussions](https://github.com/sr320/ConTra/discussions)
 -   
 
-## 📈 Roadmap
-
--   [ ] Add support for additional omics data types
--   [ ] Implement machine learning-based regulatory network inference
--   [ ] Create interactive visualization dashboard
--   [ ] Add Docker containerization
--   [ ] Expand test coverage
--   [ ] Create comprehensive documentation website
 
 ------------------------------------------------------------------------
 
