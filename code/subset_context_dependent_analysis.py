@@ -1094,6 +1094,179 @@ class OptimizedContextDependentRegulationAnalysis:
         
         print(f"✅ Markdown report generated: {report_path}")
         
+    def generate_html_report(self):
+        """Generate HTML report with embedded images."""
+        print("\n" + "="*60)
+        print("GENERATING HTML REPORT")
+        print("="*60)
+        
+        html_report_path = os.path.join(self.reports_dir, "subset_context_dependent_analysis_report.html")
+        md_report_path = os.path.join(self.reports_dir, "subset_context_dependent_analysis_report.md")
+        
+        # Read the markdown content
+        if not os.path.exists(md_report_path):
+            print("⚠️  Markdown report not found. Generate markdown report first.")
+            return
+            
+        with open(md_report_path, 'r') as f:
+            md_content = f.read()
+        
+        # Convert images to base64 and embed them
+        html_content = self._convert_md_to_html_with_embedded_images(md_content)
+        
+        # Write HTML report
+        with open(html_report_path, 'w') as f:
+            f.write(html_content)
+        
+        print(f"✅ HTML report generated: {html_report_path}")
+        
+    def _convert_md_to_html_with_embedded_images(self, md_content):
+        """Convert markdown to HTML with embedded base64 images."""
+        # Basic HTML structure
+        html_head = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subset Context-Dependent Regulation Analysis Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1, h2, h3, h4 { color: #333; }
+        h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+        h2 { border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 30px; }
+        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f5f5f5; font-weight: bold; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        img { max-width: 100%; height: auto; display: block; margin: 20px auto; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .warning { background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; padding: 10px; margin: 10px 0; }
+        code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 3px; }
+        pre { background-color: #f4f4f4; padding: 10px; border-radius: 5px; overflow-x: auto; }
+        ul { margin: 10px 0; }
+        li { margin: 5px 0; }
+    </style>
+</head>
+<body>"""
+        
+        html_footer = """</body>
+</html>"""
+        
+        # Convert markdown to HTML (simple conversion)
+        html_body = md_content
+        
+        # Convert headers
+        html_body = html_body.replace('#### ', '<h4>').replace('\n', '</h4>\n', html_body.count('#### '))
+        html_body = html_body.replace('### ', '<h3>').replace('\n', '</h3>\n', html_body.count('### '))
+        html_body = html_body.replace('## ', '<h2>').replace('\n', '</h2>\n', html_body.count('## '))
+        html_body = html_body.replace('# ', '<h1>').replace('\n', '</h1>\n', html_body.count('# '))
+        
+        # Convert bold text
+        import re
+        html_body = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html_body)
+        
+        # Convert lists
+        lines = html_body.split('\n')
+        in_list = False
+        result_lines = []
+        
+        for line in lines:
+            if line.strip().startswith('- '):
+                if not in_list:
+                    result_lines.append('<ul>')
+                    in_list = True
+                result_lines.append(f'<li>{line.strip()[2:]}</li>')
+            else:
+                if in_list:
+                    result_lines.append('</ul>')
+                    in_list = False
+                result_lines.append(line)
+        
+        if in_list:
+            result_lines.append('</ul>')
+            
+        html_body = '\n'.join(result_lines)
+        
+        # Convert paragraphs
+        paragraphs = html_body.split('\n\n')
+        html_paragraphs = []
+        for para in paragraphs:
+            para = para.strip()
+            if para and not para.startswith('<') and not para.startswith('|'):
+                html_paragraphs.append(f'<p>{para}</p>')
+            else:
+                html_paragraphs.append(para)
+        
+        html_body = '\n\n'.join(html_paragraphs)
+        
+        # Convert tables
+        table_lines = html_body.split('\n')
+        result_lines = []
+        in_table = False
+        
+        for i, line in enumerate(table_lines):
+            if '|' in line and line.strip().startswith('|'):
+                if not in_table:
+                    result_lines.append('<table>')
+                    in_table = True
+                
+                # Check if this is a header separator line
+                if '---' in line:
+                    continue
+                
+                # Process table row
+                cells = [cell.strip() for cell in line.split('|')[1:-1]]  # Remove empty first/last
+                if i < len(table_lines) - 1 and '---' in table_lines[i + 1]:
+                    # This is a header row
+                    row_html = '<tr>' + ''.join(f'<th>{cell}</th>' for cell in cells) + '</tr>'
+                else:
+                    # This is a data row
+                    row_html = '<tr>' + ''.join(f'<td>{cell}</td>' for cell in cells) + '</tr>'
+                
+                result_lines.append(row_html)
+            else:
+                if in_table:
+                    result_lines.append('</table>')
+                    in_table = False
+                result_lines.append(line)
+        
+        if in_table:
+            result_lines.append('</table>')
+            
+        html_body = '\n'.join(result_lines)
+        
+        # Convert images to embedded base64
+        image_pattern = r'!\[(.*?)\]\((.*?)\)'
+        
+        def replace_image(match):
+            alt_text = match.group(1)
+            image_path = match.group(2)
+            
+            # Convert relative path to absolute
+            if image_path.startswith('plots/'):
+                full_image_path = os.path.join(self.plots_dir, image_path.replace('plots/', ''))
+            else:
+                full_image_path = image_path
+            
+            if os.path.exists(full_image_path):
+                try:
+                    with open(full_image_path, 'rb') as img_file:
+                        img_data = img_file.read()
+                        img_base64 = base64.b64encode(img_data).decode('utf-8')
+                        return f'<img src="data:image/png;base64,{img_base64}" alt="{alt_text}" title="{alt_text}">'
+                except Exception as e:
+                    print(f"⚠️  Could not embed image {full_image_path}: {e}")
+                    return f'<p class="warning">⚠️ Image not found: {alt_text}</p>'
+            else:
+                return f'<p class="warning">⚠️ Image not found: {alt_text} ({image_path})</p>'
+        
+        html_body = re.sub(image_pattern, replace_image, html_body)
+        
+        # Handle warning messages
+        html_body = html_body.replace('⚠️', '<span class="warning">⚠️')
+        html_body = html_body.replace('**\n\n', '**</span>\n\n')
+        
+        return html_head + '\n' + html_body + '\n' + html_footer
+        
     def print_context_summary(self):
         """Print summary of context-dependent analysis."""
         print("\n" + "="*60)
@@ -1167,6 +1340,9 @@ class OptimizedContextDependentRegulationAnalysis:
         
         # Generate markdown report
         self.generate_markdown_report()
+        
+        # Generate HTML report
+        self.generate_html_report()
         
         # Print summary
         self.print_context_summary()

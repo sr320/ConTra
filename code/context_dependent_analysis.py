@@ -1341,6 +1341,9 @@ class OptimizedContextDependentRegulationAnalysis:
         # Generate markdown report
         self.generate_markdown_report()
         
+        # Generate HTML report
+        self.generate_html_report()
+        
         # Print summary
         self.print_context_summary()
         
