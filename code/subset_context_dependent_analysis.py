@@ -896,8 +896,8 @@ class OptimizedContextDependentRegulationAnalysis:
         print("GENERATING CONTEXT-DEPENDENT VISUALIZATIONS")
         print("="*60)
         
-        # Create output directory
-        os.makedirs("output/context_dependent_analysis", exist_ok=True)
+        # FIXED: Use the properly configured output directory instead of hardcoded path
+        # The output directory is already created in the constructor
         
         # Generate plots in parallel
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -910,7 +910,7 @@ class OptimizedContextDependentRegulationAnalysis:
             future_networks.result()
             future_improvements.result()
         
-        print("✅ All context-dependent visualizations saved to output/context_dependent_analysis/")
+        print(f"✅ All context-dependent visualizations saved to {self.plots_dir}/")
         
     def plot_context_dependent_interactions(self):
         """Plot context-dependent interaction analysis."""
