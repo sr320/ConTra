@@ -15,27 +15,33 @@ networks.
 
 ## 🚀 Features
 
--   **Multi-omics Integration**: Analyzes gene expression, lncRNA,
-    miRNA, and DNA methylation data
--   **High-Performance Computing**: Parallel processing across 48+ CPU
-    cores with optimized memory usage
--   **Context-Dependent Analysis**: Identifies regulatory interactions
-    that vary across different biological contexts
--   **Advanced Statistical Methods**:
-    -   Interaction term analysis
-    -   Conditional correlation analysis
-    -   Multi-variable regression with interaction terms
-    -   Context-specific regulatory network inference
--   **Memory Optimization**: Efficient batch processing using up to
-    247GB RAM
--   **Comprehensive Output**: Generates plots, tables, and detailed
-    reports
+- **Multi-omics Integration**: Analyzes gene expression, lncRNA, miRNA, and DNA methylation data
+- **High-Performance Computing**: Parallel processing with automatic CPU core detection and optimized memory usage
+- **Context-Dependent Analysis**: Identifies regulatory interactions that vary across different biological contexts
+- **Advanced Statistical Methods**:
+  - Interaction term analysis with parallel processing
+  - Conditional correlation analysis using vectorized operations
+  - Multi-variable regression with interaction terms
+  - Context-specific regulatory network inference
+  - Multi-way interaction analysis for complex regulatory patterns
+- **Memory Optimization**: Efficient batch processing with automatic memory management
+- **Comprehensive Output**: Generates plots, tables, HTML/Markdown reports, and network visualizations
+- **Flexible Analysis Scale**: Choose between full genome-wide analysis or rapid subset analysis
 
 ## 📋 Requirements
 
--   Python 3.8+
--   8GB+ RAM (recommended: 16GB+)
--   Multi-core CPU (recommended: 8+ cores)
+### System Requirements
+
+- Python 3.8+
+- 16GB+ RAM (recommended: 32GB+ for full analysis)
+- Multi-core CPU (recommended: 8+ cores, optimized for 48+ cores)
+
+### Performance Specifications
+
+- **Full Analysis**: ~several hours on 48+ cores, high memory usage
+- **Subset Analysis**: ~5 minutes on 48+ cores, moderate memory usage
+- **Parallel Processing**: Automatically detects and uses all available CPU cores
+- **Memory Optimization**: Efficient batch processing with automatic memory management
 
 ## 🛠️ Installation
 
@@ -118,12 +124,39 @@ data/cleaned_datasets/
 └── README.md                    # Detailed data documentation
 ```
 
-#### **Ready for Analysis**
+### Ready for Analysis
 
-These datasets are immediately usable for: - Multi-omics correlation
-analysis - Time series analysis across TP1-TP4 time points -
-Context-dependent regulatory network inference - Statistical modeling
-and machine learning workflows
+These datasets are immediately usable for:
+
+- Multi-omics correlation analysis with parallel processing
+- Time series analysis across TP1-TP4 time points
+- Context-dependent regulatory network inference
+- Statistical modeling and machine learning workflows
+- High-performance computing applications with memory optimization
+
+## ⚡ Performance Optimization
+
+ConTra implements several performance optimizations:
+
+- **Automatic Parallelization**: Detects available CPU cores and distributes work across all available processors
+- **Vectorized Operations**: Uses NumPy vectorization for 100x faster correlation calculations
+- **Memory Management**: Efficient batch processing with automatic garbage collection
+- **Concurrent I/O**: Parallel data loading using ThreadPoolExecutor
+- **Optimized Algorithms**: Memory-efficient algorithms that scale with available system resources
+
+### Quick Start
+
+Run the analysis scripts directly:
+
+```bash
+# For subset analysis (500 genes, ~5 minutes on 48 cores)
+cd code
+python subset_context_dependent_analysis.py
+
+# For full analysis (36,084 genes, several hours)
+cd code
+python context_dependent_analysis.py
+```
 
 ## 🔬 Methodology
 
@@ -131,13 +164,15 @@ ConTra employs several sophisticated approaches to identify
 context-dependent regulatory interactions:
 
 1.  **Interaction Term Analysis**: Examines how regulatory relationships
-    change across different biological contexts
+    change across different biological contexts using parallel processing
 2.  **Conditional Correlation Analysis**: Identifies correlations that
-    are context-specific
+    are context-specific using vectorized operations
 3.  **Multi-variable Regression**: Models complex regulatory networks
-    with interaction terms
-4.  **Network Inference**: Constructs context-specific regulatory
-    networks
+    with interaction terms using parallelized computation
+4.  **Context-Specific Network Inference**: Constructs regulatory
+    networks that vary across biological conditions
+5.  **Multi-way Interaction Analysis**: Identifies genes with complex
+    regulatory patterns involving multiple RNA and epigenetic factors
 
 ## 📁 Project Structure
 
@@ -157,14 +192,47 @@ ConTra/
 ### Script Differences
 
 **`context_dependent_analysis.py`** - **Full Analysis Pipeline**
+
 - Analyzes **ALL 36,084 genes** in the dataset
 - Comprehensive regulatory interaction analysis across all genes
-- Higher computational requirements but complete coverage
+- Higher computational requirements (several hours on multi-core systems)
+- Generates complete results for publication-ready analysis
 
 **`subset_context_dependent_analysis.py`** - **Subset Analysis Tools**
+
 - Analyzes **500 genes** (randomly sampled from the full dataset)
-- Faster execution for testing and development
-- Lower computational requirements (~5 min on 48 cores)
+- Faster execution for testing and development (~5 minutes on 48+ cores)
+- Lower computational requirements and memory usage
+- Ideal for method development and proof-of-concept analysis
+
+## 📊 Analysis Output
+
+ConTra generates comprehensive results organized in timestamped directories:
+
+### Output Structure
+```
+output/
+└── [analysis_type]_[timestamp]/
+    ├── plots/
+    │   ├── context_dependent_interactions.png
+    │   ├── context_networks.png
+    │   └── interaction_improvements.png
+    ├── reports/
+    │   ├── [analysis]_report.html
+    │   └── [analysis]_report.md
+    └── tables/
+        ├── methylation_mirna_context.csv
+        ├── lncrna_mirna_context.csv
+        ├── multi_way_interactions.csv
+        └── correlation_results.csv
+```
+
+### Key Results
+
+1. **Context-Dependent Interactions**: Regulatory relationships that vary across biological contexts
+2. **Multi-way Interactions**: Complex regulatory patterns involving multiple omics layers
+3. **Network Visualizations**: Context-specific regulatory network graphs
+4. **Statistical Reports**: Detailed analysis with interaction improvements and significance tests
 
 ## 🤝 Contributing
 
