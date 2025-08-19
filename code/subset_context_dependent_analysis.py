@@ -3,9 +3,9 @@
 OPTIMIZED Context-Dependent Regulation Analysis
 
 This optimized script identifies context-dependent regulatory interactions using:
-- Parallel processing across 48 CPU cores
+- Parallel processing across available CPU cores
 - Vectorized operations for 100x faster correlations
-- Memory-efficient batch processing using 247GB RAM
+- Memory-efficient batch processing using available RAM
 - Concurrent data loading and processing
 
 Methods used:
@@ -62,7 +62,7 @@ class OptimizedContextDependentRegulationAnalysis:
         
         # Set number of jobs for parallel processing
         if n_jobs is None:
-            self.n_jobs = min(48, mp.cpu_count())  # Use all available cores
+            self.n_jobs = mp.cpu_count()  # Use all available cores
         else:
             self.n_jobs = n_jobs
         
@@ -90,13 +90,33 @@ class OptimizedContextDependentRegulationAnalysis:
     def _get_available_ram(self):
         """Get available RAM in GB."""
         try:
+            # Try Linux method first
             with open('/proc/meminfo', 'r') as f:
                 for line in f:
                     if line.startswith('MemAvailable:'):
                         return int(line.split()[1]) / (1024**2)
         except:
             pass
-        return 200  # Default fallback
+        
+        try:
+            # Try macOS method
+            import subprocess
+            result = subprocess.run(['sysctl', '-n', 'hw.memsize'], 
+                                  capture_output=True, text=True, check=True)
+            total_bytes = int(result.stdout.strip())
+            return total_bytes / (1024**3)  # Convert bytes to GB
+        except:
+            pass
+        
+        try:
+            # Try alternative method using psutil if available
+            import psutil
+            return psutil.virtual_memory().total / (1024**3)
+        except ImportError:
+            pass
+        
+        # If all methods fail, return a more realistic default
+        return 16.0  # Default fallback for typical development machines
 
     def load_datasets(self):
         """Load all cleaned datasets with parallel processing and memory optimization."""
