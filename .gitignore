@@ -174,3 +174,5 @@ __marimo__/
 
 output
 .Rhistory
+# R / RStudio project files
+*.Rproj
