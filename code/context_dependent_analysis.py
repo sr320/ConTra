@@ -66,18 +66,32 @@ class OptimizedContextDependentRegulationAnalysis:
         }
     }
 
-    def __init__(self, data_dir="data/cleaned_datasets", n_jobs=None, mode: str = 'full', output_root: str = 'output'):
+    def __init__(self, data_dir: str = "data/cleaned_datasets", n_jobs: int = None, mode: str = 'full', output_root: str = 'output'):
+        """Initialize analysis object.
+
+        Parameters
+        ----------
+        data_dir : str
+            Relative path to cleaned datasets directory.
+        n_jobs : int | None
+            Number of parallel workers (default: all cores, optionally capped by CONTRA_MAX_CORES env).
+        mode : {'full','subset'}
+            Analysis mode controlling sampling/regulator sizes.
+        output_root : str
+            Base output directory (relative to repo root).
+        """
         mode = (mode or 'full').lower()
         if mode not in self.CONFIG:
             raise ValueError("mode must be 'full' or 'subset'")
         self.mode = mode
 
+        # Paths & data containers
         self.workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.data_dir = os.path.join(self.workspace_root, data_dir)
         self.datasets: Dict[str, pd.DataFrame] = {}
         self.results: Dict[str, Any] = {}
-        # Determine parallel worker count: use provided n_jobs, else all available cores,
-        # optionally capped by environment variable CONTRA_MAX_CORES.
+
+        # Parallel workers (allow env cap)
         if n_jobs is not None:
             self.n_jobs = n_jobs
         else:
@@ -88,27 +102,36 @@ class OptimizedContextDependentRegulationAnalysis:
                 max_env_val = None
             cpu_total = mp.cpu_count()
             self.n_jobs = min(cpu_total, max_env_val) if max_env_val else cpu_total
+
+        # Seed
         self.seed = self.CONFIG[self.mode]['seed']
         if self.seed is not None:
             np.random.seed(self.seed)
+
+        # Output directories
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Base output root (under repo root). Allow override but always anchor to workspace_root.
         self.base_output_root = os.path.join(self.workspace_root, output_root.rstrip('/'))
-        self.output_dir = os.path.join(
-            self.base_output_root,
-            f"context_dependent_analysis_{self.mode}_{self.timestamp}"
-        )
-        for d in [self.output_dir]:
-            os.makedirs(d, exist_ok=True)
+        self.output_dir = os.path.join(self.base_output_root, f"context_dependent_analysis_{self.mode}_{self.timestamp}")
+        os.makedirs(self.output_dir, exist_ok=True)
         self.plots_dir = os.path.join(self.output_dir, "plots")
         self.tables_dir = os.path.join(self.output_dir, "tables")
         self.reports_dir = os.path.join(self.output_dir, "reports")
         for d in (self.plots_dir, self.tables_dir, self.reports_dir):
             os.makedirs(d, exist_ok=True)
+
         print(f"🚀 Initializing {self.mode.upper()} context-dependent analysis with {self.n_jobs} parallel workers")
         print(f"💾 Available RAM: {self._get_available_ram():.1f} GB")
         print(f"📁 Output directory: {self.output_dir}")
+
+        # Load data
         self.load_datasets()
+
+        # Permutation configuration (can be overridden after construction)
+        self.permutation_enabled = False
+        self.permutation_min = 100
+        self.permutation_max = 1000
+        self.permutation_alpha = 0.05
+        self.permutation_batch = 25
         
     def _get_available_ram(self):
         """Get available RAM in GB."""
@@ -275,19 +298,77 @@ class OptimizedContextDependentRegulationAnalysis:
         
     def _get_top_correlations_vectorized(self, target_data: np.ndarray, regulator_data: pd.DataFrame, 
                                        regulator_type: str, top_n: int = 10) -> List[Tuple[str, float, float]]:
-        """Get top correlations using vectorized operations."""
-        correlations = []
-        
-        # Vectorized correlation calculation
+        """Get top correlations using vectorized operations with optional adaptive permutation p-values.
+
+        Returns list of tuples: (name, corr, pval) where pval is empirical if permutation enabled.
+        """
+        correlations: List[Tuple[str, float, float]] = []
+
+        # Precompute target summary once
+        target_vals = target_data
+        if self.permutation_enabled:
+            # Pre-center target for permutation reuse
+            self._perm_target_centered = target_vals - target_vals.mean()
+            self._perm_target_denom = np.sqrt((self._perm_target_centered ** 2).sum())
+
         for regulator in regulator_data.index:
-            regulator_values = regulator_data.loc[regulator].values
-            corr, pval = pearsonr(target_data, regulator_values)
-            if pval < 0.1:  # Filter by significance
-                correlations.append((f"{regulator_type}_{regulator}", corr, pval))
-        
-        # Sort by absolute correlation and return top N
+            reg_vals = regulator_data.loc[regulator].values
+            corr, pval_param = pearsonr(target_vals, reg_vals)
+            if pval_param < 0.1:  # pre-filter to reduce permutation load
+                if self.permutation_enabled:
+                    empirical_p = self._adaptive_permutation_pvalue(target_vals, reg_vals, abs(corr))
+                    p_final = empirical_p
+                else:
+                    p_final = pval_param
+                correlations.append((f"{regulator_type}_{regulator}", corr, p_final))
+
         correlations.sort(key=lambda x: abs(x[1]), reverse=True)
         return correlations[:top_n]
+
+    def _adaptive_permutation_pvalue(self, x: np.ndarray, y: np.ndarray, observed_abs_corr: float) -> float:
+        """Compute empirical p-value for correlation using adaptive permutation.
+
+        Adaptive rules:
+          - Run in batches until min permutations reached.
+          - Early stop 'not significant' if minimal achievable p > alpha.
+          - Early stop 'significant' if maximal achievable p < alpha.
+        """
+        n = len(x)
+        if n < 6:  # not enough samples for reliable permutation
+            return 1.0
+        # Precompute centered vectors (reuse target pre-centering if available)
+        x_centered = getattr(self, '_perm_target_centered', x - x.mean())
+        denom_x = getattr(self, '_perm_target_denom', np.sqrt((x_centered ** 2).sum()))
+        y_centered = y - y.mean()
+        denom_y = np.sqrt((y_centered ** 2).sum())
+        if denom_x == 0 or denom_y == 0:
+            return 1.0
+        idx = np.arange(n)
+        extreme = 0
+        performed = 0
+        # We count correlation magnitude >= observed
+        while performed < self.permutation_max:
+            batch = min(self.permutation_batch, self.permutation_max - performed)
+            for _ in range(batch):
+                np.random.shuffle(idx)
+                # Shuffle x_centered
+                shuffled = x_centered[idx]
+                corr = (shuffled * y_centered).sum() / (denom_x * denom_y)
+                if abs(corr) >= observed_abs_corr:
+                    extreme += 1
+            performed += batch
+            p_emp = (extreme + 1) / (performed + 1)
+            # Minimum possible p if no more extremes; only if we have min perms
+            if performed >= self.permutation_min:
+                min_possible = 1 / (performed + 1)
+                max_possible = (extreme + (self.permutation_max - performed) + 1) / (self.permutation_max + 1)
+                # Guaranteed not significant
+                if min_possible > self.permutation_alpha:
+                    return p_emp
+                # Guaranteed significant
+                if max_possible < self.permutation_alpha:
+                    return p_emp
+        return (extreme + 1) / (performed + 1)
         
     def _analyze_methylation_mirna_interaction(self, gene_name: str, gene_expression: np.ndarray, 
                                              mirna_name: str, meth_name: str) -> Dict:
@@ -1445,6 +1526,10 @@ def main(mode: str = None):
         parser.add_argument('--mode', choices=['full','subset'], help="Run mode: full or subset", default=None)
         parser.add_argument('--n-jobs', type=int, default=None, help="Number of parallel workers")
         parser.add_argument('--output-root', type=str, default='output', help="Base output directory relative to repo root (default: output)")
+        parser.add_argument('--perm', action='store_true', help='Enable adaptive permutation p-values for correlations')
+        parser.add_argument('--perm-min', type=int, default=100, help='Minimum permutations (default 100)')
+        parser.add_argument('--perm-max', type=int, default=1000, help='Maximum permutations (default 1000)')
+        parser.add_argument('--perm-alpha', type=float, default=0.05, help='Alpha for adaptive early stopping (default 0.05)')
         args = parser.parse_args()
         mode = args.mode
         n_jobs = args.n_jobs
@@ -1459,6 +1544,16 @@ def main(mode: str = None):
         except EOFError:
             mode = 'full'
     analysis = OptimizedContextDependentRegulationAnalysis(mode=mode, n_jobs=n_jobs, output_root=output_root)
+    if mode is None:
+        mode = analysis.mode  # ensure mode set
+    # Apply permutation settings if provided
+    if 'args' in locals() and args.perm:
+        analysis.permutation_enabled = True
+        analysis.permutation_min = max(10, args.perm_min)
+        analysis.permutation_max = max(analysis.permutation_min, args.perm_max)
+        analysis.permutation_alpha = args.perm_alpha
+        analysis.permutation_batch = max(10, analysis.permutation_min // 10)
+        print(f"🔁 Permutation testing enabled: min={analysis.permutation_min}, max={analysis.permutation_max}, alpha={analysis.permutation_alpha}, batch={analysis.permutation_batch}")
     analysis.run_complete_context_analysis()
 
 if __name__ == "__main__":

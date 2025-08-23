@@ -105,6 +105,45 @@ CONTRA_MAX_CORES=64 python3 code/context_dependent_analysis.py --mode full
 python3 code/context_dependent_analysis.py --mode subset --n-jobs 32
 ```
 
+#### Optional Adaptive Permutation Testing
+
+You can obtain empirical p-values for top correlations using on-demand, early-stopping permutations. Disabled by default to keep the default run fast.
+
+Flags:
+
+- `--perm` Enable adaptive permutation testing
+- `--perm-min INT` Minimum permutations per tested correlation (default: 1000)
+- `--perm-max INT` Maximum permutations (default: 100000)
+- `--perm-alpha FLOAT` Target tail probability precision (default: 0.001). Stops early when achievable precision reached or max permutations hit.
+
+How it works (per correlation sign):
+
+1. Generate permutations in batches (inverting the correlation by shuffling one vector)
+2. Track exceedances (|r_perm| >= |r_obs|)
+3. After each batch, form empirical p = (exceed + 1) / (n_perm + 1)
+4. Compute a two-sided binomial CI width; stop if max(n_perm) reached or CI half-width < `perm_alpha/2`
+
+Interpretation:
+
+- Reported p is conservative (add-one smoothing) and bounded below by 1/(n_perm+1)
+- Very strong correlations may stop early (e.g. after ~2–5k permutations) saving time
+- Weak correlations accumulate permutations until they can be confidently declared non-significant
+
+Example (subset mode, 16 workers, enable permutations):
+
+```bash
+python3 code/context_dependent_analysis.py --mode subset --n-jobs 16 --perm --perm-min 2000 --perm-max 50000 --perm-alpha 0.0005
+```
+
+Result columns (where applicable) gain `empirical_p` alongside existing statistical metrics.
+
+Performance tips:
+
+- Start with smaller `--perm-min` (e.g. 1000) to gauge runtime
+- Increase `--perm-max` only if you need finer p-value resolution (<1e-4)
+- Tightening `--perm-alpha` increases runtime; loosening speeds it up
+- Use subset mode first to benchmark permutation cost before running full
+
 Outputs (per run) are written to:
 
 ```text
