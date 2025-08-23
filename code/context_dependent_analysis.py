@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-OPTIMIZED Context-Dependent Regulation Analysis
+Unified Context-Dependent Regulation Analysis (Full/Subet Modes)
 
-This optimized script identifies context-dependent regulatory interactions using:
-- Parallel processing across 48 CPU cores
-- Vectorized operations for 100x faster correlations
-- Memory-efficient batch processing using 247GB RAM
-- Concurrent data loading and processing
+This script merges previous full and subset analysis scripts. Features:
+- Mode selection (full / subset) via CLI or interactive prompt
+- Mode-specific sampling and regulator breadth
+- Robust plotting with error handling (from subset script)
+- Parallelized and vectorized computations
 
-Methods used:
-- Interaction term analysis (parallelized)
-- Conditional correlation analysis (vectorized)
-- Multi-variable regression with interaction terms (parallelized)
-- Context-specific regulatory network inference (optimized)
+Configuration summary:
+Full mode:
+    • All genes for pairwise, multi-way, and context network analyses
+    • Regulators: miRNA top 25 (use 10), methylation top 50 (use 15), lncRNA top 50 (use 15)
+    • Multi-way regulators: miRNA15 / lncRNA30 / methylation25
+Subset mode:
+    • Pairwise genes 500, multi-way 200, context networks 200 (random, seed=42)
+    • Regulators: miRNA top 10 (use 5), methylation top 10 (use 5), lncRNA top 10 (use 5)
+    • Multi-way regulators: miRNA5 / lncRNA7 / methylation5
 """
 
 import pandas as pd
@@ -22,69 +26,75 @@ import seaborn as sns
 from scipy import stats
 from scipy.stats import pearsonr
 from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, mean_squared_error
 import warnings
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from functools import partial
 import os
-import gc
 import time
 import base64
 from datetime import datetime
 from typing import Dict, List, Tuple, Any
 
-# FIXED: Ensure pandas is available for NaN handling
-import pandas as pd
 warnings.filterwarnings('ignore')
-
-# FIXED: Configure matplotlib for headless environments
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend for headless environments
-
-# Set plotting style
+matplotlib.use('Agg')
 plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 
 class OptimizedContextDependentRegulationAnalysis:
-    def __init__(self, data_dir="data/cleaned_datasets", n_jobs=None):
-        """Initialize the optimized context-dependent analysis."""
-        # FIXED: Get workspace root directory (parent of code directory)
+    """Unified context-dependent regulation analysis supporting full and subset modes."""
+
+    CONFIG = {
+        'full': {
+            'pairwise_gene_limit': None,
+            'multi_way_gene_limit': None,
+            'context_network_gene_limit': None,
+            'methylation_mirna': {'miRNA_top': 25, 'miRNA_use': 10, 'meth_top': 50, 'meth_use': 15},
+            'lncrna_mirna': {'lnc_top': 50, 'lnc_use': 15, 'miRNA_top': 25, 'miRNA_use': 10},
+            'multi_way_regulators': {'miRNA': 15, 'lncRNA': 30, 'methylation': 25},
+            'seed': None
+        },
+        'subset': {
+            'pairwise_gene_limit': 500,
+            'multi_way_gene_limit': 200,
+            'context_network_gene_limit': 200,
+            'methylation_mirna': {'miRNA_top': 10, 'miRNA_use': 5, 'meth_top': 10, 'meth_use': 5},
+            'lncrna_mirna': {'lnc_top': 10, 'lnc_use': 5, 'miRNA_top': 10, 'miRNA_use': 5},
+            'multi_way_regulators': {'miRNA': 5, 'lncRNA': 7, 'methylation': 5},
+            'seed': 42
+        }
+    }
+
+    def __init__(self, data_dir="data/cleaned_datasets", n_jobs=None, mode: str = 'full'):
+        mode = (mode or 'full').lower()
+        if mode not in self.CONFIG:
+            raise ValueError("mode must be 'full' or 'subset'")
+        self.mode = mode
+
         self.workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
-        # Set absolute paths relative to workspace root
         self.data_dir = os.path.join(self.workspace_root, data_dir)
-        self.datasets = {}
-        self.results = {}
-        
-        # Set number of jobs for parallel processing
-        if n_jobs is None:
-            self.n_jobs = min(48, mp.cpu_count())  # Use all available cores
-        else:
-            self.n_jobs = n_jobs
-        
-        # Create timestamped output directory
+        self.datasets: Dict[str, pd.DataFrame] = {}
+        self.results: Dict[str, Any] = {}
+        self.n_jobs = min(48, mp.cpu_count()) if n_jobs is None else n_jobs
+        self.seed = self.CONFIG[self.mode]['seed']
+        if self.seed is not None:
+            np.random.seed(self.seed)
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # FIXED: Create output directory in workspace root, not inside code directory
-        self.output_dir = os.path.join(self.workspace_root, f"output/context_dependent_analysis_{self.timestamp}")
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # Create subdirectories for different output types
+        self.output_dir = os.path.join(
+            self.workspace_root,
+            f"output/context_dependent_analysis_{self.mode}_{self.timestamp}"
+        )
+        for d in [self.output_dir]:
+            os.makedirs(d, exist_ok=True)
         self.plots_dir = os.path.join(self.output_dir, "plots")
         self.tables_dir = os.path.join(self.output_dir, "tables")
         self.reports_dir = os.path.join(self.output_dir, "reports")
-        
-        os.makedirs(self.plots_dir, exist_ok=True)
-        os.makedirs(self.tables_dir, exist_ok=True)
-        os.makedirs(self.reports_dir, exist_ok=True)
-            
-        print(f"🚀 Initializing optimized context-dependent analysis with {self.n_jobs} parallel workers")
+        for d in (self.plots_dir, self.tables_dir, self.reports_dir):
+            os.makedirs(d, exist_ok=True)
+        print(f"🚀 Initializing {self.mode.upper()} context-dependent analysis with {self.n_jobs} parallel workers")
         print(f"💾 Available RAM: {self._get_available_ram():.1f} GB")
         print(f"📁 Output directory: {self.output_dir}")
-        
         self.load_datasets()
         
     def _get_available_ram(self):
@@ -157,11 +167,11 @@ class OptimizedContextDependentRegulationAnalysis:
         print(f"Conditions: {self.conditions}")
 
     def analyze_context_dependent_regulation(self):
-        """Main analysis for context-dependent regulation using parallel processing."""
+        """Main analysis orchestrator."""
         print("\n" + "="*80)
-        print("🚀 OPTIMIZED CONTEXT-DEPENDENT REGULATION ANALYSIS")
+        print(f"🚀 OPTIMIZED CONTEXT-DEPENDENT REGULATION ANALYSIS (MODE: {self.mode.upper()})")
         print("="*80)
-        print(f"Using {self.n_jobs} parallel workers for maximum performance")
+        print(f"Using {self.n_jobs} parallel workers | Mode: {self.mode}")
         print("="*80)
         
         start_time = time.time()
@@ -195,45 +205,34 @@ class OptimizedContextDependentRegulationAnalysis:
         print("✅ Context-dependent analysis completed with parallel processing!")
         
     def parallel_analyze_methylation_mirna_context(self):
-        """Analyze methylation-gene interactions dependent on miRNA levels using parallel processing."""
         print("  🔄 Parallel processing methylation-miRNA context analysis...")
-        
-        # Analyze ALL genes in the dataset (full analysis)
-        n_genes = len(self.datasets['gene'])  # Use all 36,084 genes
-        sampled_genes = self.datasets['gene'].index  # Use all genes, not random sample
-        
-        # Split genes into chunks for parallel processing
-        gene_chunks = np.array_split(sampled_genes, self.n_jobs)
-        
-        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} parallel chunks...")
-        
-        # Process chunks in parallel
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
-            future_to_chunk = {
-                executor.submit(self._process_methylation_mirna_chunk, chunk): i 
-                for i, chunk in enumerate(gene_chunks)
-            }
-            
-            all_results = []
-            
-            for future in as_completed(future_to_chunk):
-                chunk_idx = future_to_chunk[future]
-                try:
-                    chunk_results = future.result()
-                    all_results.extend(chunk_results)
-                    print(f"    ✅ Chunk {chunk_idx + 1}/{len(gene_chunks)} completed: {len(chunk_results)} results")
-                except Exception as exc:
-                    print(f"    ❌ Chunk {chunk_idx + 1} generated an exception: {exc}")
-        
-        # Combine results
-        if all_results:
-            results_df = pd.DataFrame(all_results)
-            print(f"  🎯 Total methylation-miRNA context interactions: {len(results_df)}")
-            return results_df
+        cfg = self.CONFIG[self.mode]['methylation_mirna']
+        if self.CONFIG[self.mode]['pairwise_gene_limit'] is None:
+            sampled_genes = self.datasets['gene'].index
         else:
-            return pd.DataFrame()
-            
-    def _process_methylation_mirna_chunk(self, gene_chunk: List[str]) -> List[Dict]:
+            limit = min(self.CONFIG[self.mode]['pairwise_gene_limit'], len(self.datasets['gene']))
+            sampled_genes = np.random.choice(self.datasets['gene'].index, limit, replace=False)
+        n_genes = len(sampled_genes)
+        gene_chunks = np.array_split(sampled_genes, min(self.n_jobs, n_genes))
+        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} chunks (mode={self.mode})")
+        all_results = []
+        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
+            futures = {ex.submit(self._process_methylation_mirna_chunk, chunk, cfg): i for i, chunk in enumerate(gene_chunks)}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    res = fut.result()
+                    all_results.extend(res)
+                    print(f"    ✅ Chunk {idx+1}/{len(gene_chunks)}: {len(res)} results")
+                except Exception as e:
+                    print(f"    ❌ Chunk {idx+1} failed: {e}")
+        if all_results:
+            df = pd.DataFrame(all_results)
+            print(f"  🎯 Total methylation-miRNA context interactions: {len(df)}")
+            return df
+        return pd.DataFrame()
+
+    def _process_methylation_mirna_chunk(self, gene_chunk: List[str], cfg: Dict) -> List[Dict]:
         """Process a chunk of genes for methylation-miRNA context analysis."""
         results = []
         
@@ -242,17 +241,17 @@ class OptimizedContextDependentRegulationAnalysis:
             
             # Get top miRNAs for this gene (vectorized)
             mirna_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['mirna'], 'mirna', top_n=25
+                gene_expression, self.datasets['mirna'], 'mirna', top_n=cfg['miRNA_top']
             )
             
             # Get top methylation sites for this gene (vectorized)
             meth_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['methylation'], 'methylation', top_n=50
+                gene_expression, self.datasets['methylation'], 'methylation', top_n=cfg['meth_top']
             )
             
             # Analyze interactions for top regulators
-            for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:10]:
-                for meth_name, meth_corr, meth_pval in meth_corrs[:15]:
+            for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:cfg['miRNA_use']]:
+                for meth_name, meth_corr, meth_pval in meth_corrs[:cfg['meth_use']]:
                     interaction_result = self._analyze_methylation_mirna_interaction(
                         gene, gene_expression, mirna_name, meth_name
                     )
@@ -392,45 +391,34 @@ class OptimizedContextDependentRegulationAnalysis:
             return None
 
     def parallel_analyze_lncrna_mirna_context(self):
-        """Analyze lncRNA-gene interactions dependent on miRNA levels using parallel processing."""
         print("  🔄 Parallel processing lncRNA-miRNA context analysis...")
-        
-        # Analyze ALL genes in the dataset (full analysis)
-        n_genes = len(self.datasets['gene'])  # Use all 36,084 genes
-        sampled_genes = self.datasets['gene'].index  # Use all genes, not random sample
-        
-        # Split genes into chunks for parallel processing
-        gene_chunks = np.array_split(sampled_genes, self.n_jobs)
-        
-        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} parallel chunks...")
-        
-        # Process chunks in parallel
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
-            future_to_chunk = {
-                executor.submit(self._process_lncrna_mirna_chunk, chunk): i 
-                for i, chunk in enumerate(gene_chunks)
-            }
-            
-            all_results = []
-            
-            for future in as_completed(future_to_chunk):
-                chunk_idx = future_to_chunk[future]
-                try:
-                    chunk_results = future.result()
-                    all_results.extend(chunk_results)
-                    print(f"    ✅ Chunk {chunk_idx + 1}/{len(gene_chunks)} completed: {len(chunk_results)} results")
-                except Exception as exc:
-                    print(f"    ❌ Chunk {chunk_idx + 1} generated an exception: {exc}")
-        
-        # Combine results
-        if all_results:
-            results_df = pd.DataFrame(all_results)
-            print(f"  🎯 Total lncRNA-miRNA context interactions: {len(results_df)}")
-            return results_df
+        cfg = self.CONFIG[self.mode]['lncrna_mirna']
+        if self.CONFIG[self.mode]['pairwise_gene_limit'] is None:
+            sampled_genes = self.datasets['gene'].index
         else:
-            return pd.DataFrame()
-            
-    def _process_lncrna_mirna_chunk(self, gene_chunk: List[str]) -> List[Dict]:
+            limit = min(self.CONFIG[self.mode]['pairwise_gene_limit'], len(self.datasets['gene']))
+            sampled_genes = np.random.choice(self.datasets['gene'].index, limit, replace=False)
+        n_genes = len(sampled_genes)
+        gene_chunks = np.array_split(sampled_genes, min(self.n_jobs, n_genes))
+        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} chunks (mode={self.mode})")
+        all_results = []
+        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
+            futures = {ex.submit(self._process_lncrna_mirna_chunk, chunk, cfg): i for i, chunk in enumerate(gene_chunks)}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    res = fut.result()
+                    all_results.extend(res)
+                    print(f"    ✅ Chunk {idx+1}/{len(gene_chunks)}: {len(res)} results")
+                except Exception as e:
+                    print(f"    ❌ Chunk {idx+1} failed: {e}")
+        if all_results:
+            df = pd.DataFrame(all_results)
+            print(f"  🎯 Total lncRNA-miRNA context interactions: {len(df)}")
+            return df
+        return pd.DataFrame()
+
+    def _process_lncrna_mirna_chunk(self, gene_chunk: List[str], cfg: Dict) -> List[Dict]:
         """Process a chunk of genes for lncRNA-miRNA context analysis."""
         results = []
         
@@ -439,17 +427,17 @@ class OptimizedContextDependentRegulationAnalysis:
             
             # Get top lncRNAs for this gene (vectorized)
             lncrna_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['lncrna'], 'lncrna', top_n=50
+                gene_expression, self.datasets['lncrna'], 'lncrna', top_n=cfg['lnc_top']
             )
             
             # Get top miRNAs for this gene (vectorized)
             mirna_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['mirna'], 'mirna', top_n=25
+                gene_expression, self.datasets['mirna'], 'mirna', top_n=cfg['miRNA_top']
             )
             
             # Analyze interactions for top regulators
-            for lncrna_name, lncrna_corr, lncrna_pval in lncrna_corrs[:15]:
-                for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:10]:
+            for lncrna_name, lncrna_corr, lncrna_pval in lncrna_corrs[:cfg['lnc_use']]:
+                for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:cfg['miRNA_use']]:
                     interaction_result = self._analyze_lncrna_mirna_interaction(
                         gene, gene_expression, lncrna_name, mirna_name
                     )
@@ -572,44 +560,32 @@ class OptimizedContextDependentRegulationAnalysis:
             return None
             
     def parallel_analyze_multi_way_interactions(self):
-        """Analyze complex multi-way regulatory interactions using parallel processing."""
         print("  🔄 Parallel processing multi-way regulatory interactions...")
-        
-        # Analyze ALL genes in the dataset (full analysis)
-        n_genes = len(self.datasets['gene'])  # Use all 36,084 genes
-        sampled_genes = self.datasets['gene'].index  # Use all genes, not random sample
-        
-        # Split genes into chunks for parallel processing
-        gene_chunks = np.array_split(sampled_genes, self.n_jobs)
-        
-        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} parallel chunks...")
-        
-        # Process chunks in parallel
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
-            future_to_chunk = {
-                executor.submit(self._process_multi_way_chunk, chunk): i 
-                for i, chunk in enumerate(gene_chunks)
-            }
-            
-            all_results = []
-            
-            for future in as_completed(future_to_chunk):
-                chunk_idx = future_to_chunk[future]
-                try:
-                    chunk_results = future.result()
-                    all_results.extend(chunk_results)
-                    print(f"    ✅ Chunk {chunk_idx + 1}/{len(gene_chunks)} completed: {len(chunk_results)} results")
-                except Exception as exc:
-                    print(f"    ❌ Chunk {chunk_idx + 1} generated an exception: {exc}")
-        
-        # Combine results
-        if all_results:
-            results_df = pd.DataFrame(all_results)
-            print(f"  🎯 Total multi-way interactions: {len(results_df)}")
-            return results_df
+        if self.CONFIG[self.mode]['multi_way_gene_limit'] is None:
+            sampled_genes = self.datasets['gene'].index
         else:
-            return pd.DataFrame()
-            
+            limit = min(self.CONFIG[self.mode]['multi_way_gene_limit'], len(self.datasets['gene']))
+            sampled_genes = np.random.choice(self.datasets['gene'].index, limit, replace=False)
+        n_genes = len(sampled_genes)
+        gene_chunks = np.array_split(sampled_genes, min(self.n_jobs, n_genes))
+        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} chunks (mode={self.mode})")
+        all_results = []
+        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
+            futures = {ex.submit(self._process_multi_way_chunk, chunk): i for i, chunk in enumerate(gene_chunks)}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    res = fut.result()
+                    all_results.extend(res)
+                    print(f"    ✅ Chunk {idx+1}/{len(gene_chunks)}: {len(res)} results")
+                except Exception as e:
+                    print(f"    ❌ Chunk {idx+1} failed: {e}")
+        if all_results:
+            df = pd.DataFrame(all_results)
+            print(f"  🎯 Total multi-way interactions: {len(df)}")
+            return df
+        return pd.DataFrame()
+
     def _process_multi_way_chunk(self, gene_chunk: List[str]) -> List[Dict]:
         """Process a chunk of genes for multi-way interaction analysis."""
         results = []
@@ -617,8 +593,7 @@ class OptimizedContextDependentRegulationAnalysis:
         for gene in gene_chunk:
             gene_expression = self.datasets['gene'].loc[gene].values
             
-            # Get top regulators for this gene (vectorized)
-            regulators = self._get_top_regulators_vectorized(gene, 20)
+            regulators = self._get_top_regulators_vectorized(gene)
             
             if len(regulators) >= 3:
                 # Analyze multi-way interactions
@@ -631,37 +606,24 @@ class OptimizedContextDependentRegulationAnalysis:
         
         return results
         
-    def _get_top_regulators_vectorized(self, gene: str, n_regulators: int) -> Dict[str, np.ndarray]:
-        """Get top regulators for a specific gene using vectorized operations."""
-        regulators = {}
-        
-        # Get top miRNA regulators (vectorized)
+    def _get_top_regulators_vectorized(self, gene: str) -> Dict[str, np.ndarray]:
+        cfg = self.CONFIG[self.mode]['multi_way_regulators']
+        regulators: Dict[str, np.ndarray] = {}
         mirna_corrs = self._get_top_correlations_vectorized(
-            self.datasets['gene'].loc[gene].values, 
-            self.datasets['mirna'], 'mirna', top_n=15
+            self.datasets['gene'].loc[gene].values, self.datasets['mirna'], 'mirna', top_n=cfg['miRNA']
         )
-        
-        for mirna_name, corr, pval in mirna_corrs:
-            regulators[mirna_name] = self.datasets['mirna'].loc[mirna_name.replace('mirna_', '')].values
-        
-        # Get top lncRNA regulators (vectorized)
+        for name, _, _ in mirna_corrs:
+            regulators[name] = self.datasets['mirna'].loc[name.replace('mirna_', '')].values
         lncrna_corrs = self._get_top_correlations_vectorized(
-            self.datasets['gene'].loc[gene].values, 
-            self.datasets['lncrna'], 'lncrna', top_n=30
+            self.datasets['gene'].loc[gene].values, self.datasets['lncrna'], 'lncrna', top_n=cfg['lncRNA']
         )
-        
-        for lncrna_name, corr, pval in lncrna_corrs:
-            regulators[lncrna_name] = self.datasets['lncrna'].loc[lncrna_name.replace('lncrna_', '')].values
-        
-        # Get top methylation regulators (vectorized)
+        for name, _, _ in lncrna_corrs:
+            regulators[name] = self.datasets['lncrna'].loc[name.replace('lncrna_', '')].values
         meth_corrs = self._get_top_correlations_vectorized(
-            self.datasets['gene'].loc[gene].values, 
-            self.datasets['methylation'], 'methylation', top_n=25
+            self.datasets['gene'].loc[gene].values, self.datasets['methylation'], 'methylation', top_n=cfg['methylation']
         )
-        
-        for meth_name, corr, pval in meth_corrs:
-            regulators[meth_name] = self.datasets['methylation'].loc[meth_name.replace('methylation_', '')].values
-        
+        for name, _, _ in meth_corrs:
+            regulators[name] = self.datasets['methylation'].loc[name.replace('methylation_', '')].values
         return regulators
 
     def _analyze_multi_regulator_interaction(self, gene_expression: np.ndarray, regulators: Dict[str, np.ndarray], 
@@ -743,107 +705,62 @@ class OptimizedContextDependentRegulationAnalysis:
             return None
             
     def optimized_infer_context_specific_networks(self):
-        """Infer context-specific regulatory networks using optimized methods."""
         print("  🔄 Inferring context-specific regulatory networks (parallelized)...")
-        
         context_networks = {}
-        
-        # Define contexts to analyze
         contexts_to_analyze = [
             ('high_mirna', 0.5),
             ('low_mirna', -0.5),
             ('high_methylation', 0.5)
         ]
-        
-        # Process all contexts in parallel
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
-            future_to_context = {
-                executor.submit(self._analyze_context_network_parallel, context_name, threshold): context_name
-                for context_name, threshold in contexts_to_analyze
-            }
-            
-            # Collect results as they complete
-            for future in as_completed(future_to_context):
-                context_name = future_to_context[future]
+        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
+            futures = {ex.submit(self._analyze_context_network_parallel, c, t): c for c, t in contexts_to_analyze}
+            for fut in as_completed(futures):
+                context = futures[fut]
                 try:
-                    context_result = future.result()
-                    context_networks[context_name] = context_result
-                    print(f"    ✅ {context_name} context analysis completed")
-                except Exception as exc:
-                    print(f"    ❌ {context_name} context analysis failed: {exc}")
-                    context_networks[context_name] = {
-                        'gene_mirna_correlations': [],
-                        'gene_lncrna_correlations': [],
-                        'gene_methylation_correlations': []
-                    }
-        
+                    context_networks[context] = fut.result()
+                    print(f"    ✅ {context} context analysis completed")
+                except Exception as e:
+                    print(f"    ❌ {context} context analysis failed: {e}")
+                    context_networks[context] = {k: [] for k in ['gene_mirna_correlations','gene_lncrna_correlations','gene_methylation_correlations']}
         return context_networks
         
     def _analyze_context_network_parallel(self, context_name: str, threshold: float) -> Dict:
-        """Analyze regulatory network for a specific context using parallel processing."""
         print(f"    🔄 Processing {context_name} context with {self.n_jobs} workers...")
-        
-        context_networks = {
-            'gene_mirna_correlations': [],
-            'gene_lncrna_correlations': [],
-            'gene_methylation_correlations': []
-        }
-        
-        # Analyze ALL genes in the dataset (full analysis)
-        n_genes = len(self.datasets['gene'])  # Use all 36,084 genes
-        sampled_genes = self.datasets['gene'].index  # Use all genes, not random sample
-        
-        # FIXED: Get context mask based on per-sample context variables, not features
-        if 'high_mirna' in context_name or 'low_mirna' in context_name:
-            # Sentinel miRNA approach: use first miRNA as context proxy
-            sentinel_mirna = self.datasets['mirna'].index[0]
-            mirna_values = self.datasets['mirna'].loc[sentinel_mirna].values
-            z_scores = StandardScaler().fit_transform(mirna_values.reshape(-1, 1)).ravel()
-            
-            if threshold > 0:  # high_mirna
-                context_mask = z_scores > threshold
-            else:  # low_mirna
-                context_mask = z_scores < abs(threshold)
-                
-        elif 'high_methylation' in context_name:
-            # FIXED: Implement methylation-based context
-            sentinel_cpg = self.datasets['methylation'].index[0]
-            meth_values = self.datasets['methylation'].loc[sentinel_cpg].values
-            z_scores = StandardScaler().fit_transform(meth_values.reshape(-1, 1)).ravel()
-            context_mask = z_scores > threshold
-            
+        context_networks = {k: [] for k in ['gene_mirna_correlations','gene_lncrna_correlations','gene_methylation_correlations']}
+        # Gene sampling
+        if self.CONFIG[self.mode]['context_network_gene_limit'] is None:
+            sampled_genes = self.datasets['gene'].index
         else:
-            # Fallback: use time/treatment metadata if available
+            limit = min(self.CONFIG[self.mode]['context_network_gene_limit'], len(self.datasets['gene']))
+            sampled_genes = np.random.choice(self.datasets['gene'].index, limit, replace=False)
+        # Context mask
+        if 'high_mirna' in context_name or 'low_mirna' in context_name:
+            sentinel = self.datasets['mirna'].index[0]
+            vals = self.datasets['mirna'].loc[sentinel].values
+            z = StandardScaler().fit_transform(vals.reshape(-1,1)).ravel()
+            context_mask = z > threshold if threshold > 0 else z < abs(threshold)
+        elif 'high_methylation' in context_name:
+            sentinel = self.datasets['methylation'].index[0]
+            vals = self.datasets['methylation'].loc[sentinel].values
+            z = StandardScaler().fit_transform(vals.reshape(-1,1)).ravel()
+            context_mask = z > threshold
+        else:
             context_mask = np.ones(len(self.samples), dtype=bool)
-        
-        # Filter samples by context
         context_samples = [col for i, col in enumerate(self.datasets['gene'].columns) if context_mask[i]]
-        
         if len(context_samples) < 10:
-            return context_networks  # Not enough samples for this context
-        
-        # Split genes into chunks for parallel processing
-        gene_chunks = np.array_split(sampled_genes, self.n_jobs)
-        
-        # Process gene chunks in parallel
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
-            future_to_chunk = {
-                executor.submit(self._process_context_network_chunk, chunk, context_samples, context_name): i 
-                for i, chunk in enumerate(gene_chunks)
-            }
-            
-            # Collect results as they complete
-            for future in as_completed(future_to_chunk):
-                chunk_idx = future_to_chunk[future]
+            return context_networks
+        gene_chunks = np.array_split(sampled_genes, min(self.n_jobs, len(sampled_genes)))
+        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
+            futures = {ex.submit(self._process_context_network_chunk, chunk, context_samples, context_name): i for i, chunk in enumerate(gene_chunks)}
+            for fut in as_completed(futures):
+                idx = futures[fut]
                 try:
-                    chunk_results = future.result()
-                    # Merge results from this chunk
-                    for corr_type in context_networks:
-                        context_networks[corr_type].extend(chunk_results[corr_type])
-                    print(f"      ✅ Context chunk {chunk_idx + 1}/{len(gene_chunks)} completed")
-                except Exception as exc:
-                    print(f"      ❌ Context chunk {chunk_idx + 1} failed: {exc}")
-        
+                    chunk_results = fut.result()
+                    for k in context_networks:
+                        context_networks[k].extend(chunk_results[k])
+                    print(f"      ✅ Context chunk {idx+1}/{len(gene_chunks)} completed")
+                except Exception as e:
+                    print(f"      ❌ Context chunk {idx+1} failed: {e}")
         return context_networks
         
     def _process_context_network_chunk(self, gene_chunk: List[str], context_samples: List[str], context_name: str) -> Dict:
@@ -890,148 +807,174 @@ class OptimizedContextDependentRegulationAnalysis:
         return chunk_results
         
     def generate_context_visualizations(self):
-        """Generate context-dependent analysis visualizations."""
         print("\n" + "="*60)
         print("GENERATING CONTEXT-DEPENDENT VISUALIZATIONS")
         print("="*60)
-        
-        # Create output directory
-        os.makedirs("output/context_dependent_analysis", exist_ok=True)
-        
-        # Generate plots in parallel
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            future_context = executor.submit(self.plot_context_dependent_interactions)
-            future_networks = executor.submit(self.plot_context_networks)
-            future_improvements = executor.submit(self.plot_interaction_improvements)
-            
-            # Wait for all visualizations to complete
-            future_context.result()
-            future_networks.result()
-            future_improvements.result()
-        
-        print("✅ All context-dependent visualizations saved to output/context_dependent_analysis/")
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futures = [
+                ex.submit(self.plot_context_dependent_interactions),
+                ex.submit(self.plot_context_networks),
+                ex.submit(self.plot_interaction_improvements)
+            ]
+            for fut in futures:
+                fut.result()
+        print(f"✅ All visualizations saved to {self.plots_dir}/")
         
     def plot_context_dependent_interactions(self):
-        """Plot context-dependent interaction analysis."""
-        if 'context_dependent' not in self.results:
-            return
-            
-        # Create context-dependent interaction plots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        
-        # Methylation-miRNA context
-        meth_mirna = self.results['context_dependent']['methylation_mirna_context']
-        if not meth_mirna.empty:
-            axes[0, 0].hist(meth_mirna['improvement_from_interaction'], bins=30, alpha=0.7, edgecolor='black')
-            axes[0, 0].set_title('Methylation-miRNA Context Interactions')
-            axes[0, 0].set_xlabel('Improvement from Interaction')
-            axes[0, 0].set_ylabel('Frequency')
-            axes[0, 0].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Significance threshold')
-            axes[0, 0].legend()
-        
-        # lncRNA-miRNA context
-        lncrna_mirna = self.results['context_dependent']['lncrna_mirna_context']
-        if not lncrna_mirna.empty:
-            axes[0, 1].hist(lncrna_mirna['improvement_from_interaction'], bins=30, alpha=0.7, edgecolor='black')
-            axes[0, 1].set_title('lncRNA-miRNA Context Interactions')
-            axes[0, 1].set_xlabel('Improvement from Interaction')
-            axes[0, 1].set_ylabel('Frequency')
-            axes[0, 1].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Significance threshold')
-            axes[0, 1].legend()
-        
-        # Context strength distributions
-        if not meth_mirna.empty:
-            axes[1, 0].hist(meth_mirna['context_strength'].dropna(), bins=30, alpha=0.7, edgecolor='black')
-            axes[1, 0].set_title('Methylation-miRNA Context Strength')
-            axes[1, 0].set_xlabel('Context Strength')
-            axes[1, 0].set_ylabel('Frequency')
-        
-        if not lncrna_mirna.empty:
-            axes[1, 1].hist(lncrna_mirna['context_strength'].dropna(), bins=30, alpha=0.7, edgecolor='black')
-            axes[1, 1].set_title('lncRNA-miRNA Context Strength')
-            axes[1, 1].set_xlabel('Context Strength')
-            axes[1, 1].set_ylabel('Frequency')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "context_dependent_interactions.png"), dpi=300, bbox_inches='tight')
-        plt.close()
+        try:
+            if 'context_dependent' not in self.results:
+                print("    ⚠️  No context-dependent results available for plotting")
+                return
+            fig, axes = plt.subplots(2,2, figsize=(15,12))
+            meth_mirna = self.results['context_dependent'].get('methylation_mirna_context', pd.DataFrame())
+            lncrna_mirna = self.results['context_dependent'].get('lncrna_mirna_context', pd.DataFrame())
+            if not meth_mirna.empty:
+                try:
+                    axes[0,0].hist(meth_mirna['improvement_from_interaction'].dropna(), bins=30, alpha=0.7, edgecolor='black')
+                    axes[0,0].set_title('Methylation-miRNA Context Interactions')
+                    axes[0,0].set_xlabel('Improvement from Interaction')
+                    axes[0,0].set_ylabel('Frequency')
+                    axes[0,0].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Threshold')
+                    axes[0,0].legend()
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting methylation-miRNA: {e}")
+                    axes[0,0].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[0,0].transAxes)
+            if not lncrna_mirna.empty:
+                try:
+                    axes[0,1].hist(lncrna_mirna['improvement_from_interaction'].dropna(), bins=30, alpha=0.7, edgecolor='black')
+                    axes[0,1].set_title('lncRNA-miRNA Context Interactions')
+                    axes[0,1].set_xlabel('Improvement from Interaction')
+                    axes[0,1].set_ylabel('Frequency')
+                    axes[0,1].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Threshold')
+                    axes[0,1].legend()
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting lncRNA-miRNA: {e}")
+                    axes[0,1].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[0,1].transAxes)
+            if not meth_mirna.empty:
+                try:
+                    strength = meth_mirna['context_strength'].dropna()
+                    if len(strength) > 0:
+                        axes[1,0].hist(strength, bins=30, alpha=0.7, edgecolor='black')
+                    else:
+                        axes[1,0].text(0.5,0.5,'No Data', ha='center', va='center', transform=axes[1,0].transAxes)
+                    axes[1,0].set_title('Methylation-miRNA Context Strength')
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting methylation strength: {e}")
+                    axes[1,0].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[1,0].transAxes)
+            if not lncrna_mirna.empty:
+                try:
+                    strength = lncrna_mirna['context_strength'].dropna()
+                    if len(strength) > 0:
+                        axes[1,1].hist(strength, bins=30, alpha=0.7, edgecolor='black')
+                    else:
+                        axes[1,1].text(0.5,0.5,'No Data', ha='center', va='center', transform=axes[1,1].transAxes)
+                    axes[1,1].set_title('lncRNA-miRNA Context Strength')
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting lncRNA strength: {e}")
+                    axes[1,1].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[1,1].transAxes)
+            plt.tight_layout()
+            try:
+                path = os.path.join(self.plots_dir, "context_dependent_interactions.png")
+                plt.savefig(path, dpi=300, bbox_inches='tight')
+                print(f"    ✅ Saved context-dependent interactions plot: {path}")
+            except Exception as e:
+                print(f"    ❌ Error saving plot: {e}")
+            finally:
+                plt.close()
+        except Exception as e:
+            print(f"    ❌ Error in plot_context_dependent_interactions: {e}")
+            try:
+                plt.close('all')
+            except:  # noqa
+                pass
         
     def plot_context_networks(self):
-        """Plot context-specific regulatory networks."""
-        if 'context_dependent' not in self.results:
-            return
-            
-        context_networks = self.results['context_dependent']['context_networks']
-        if not context_networks:
-            return
-            
-        # Create context network plots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        
-        contexts = list(context_networks.keys())
-        for i, context in enumerate(contexts[:4]):
-            if context in context_networks:
-                network = context_networks[context]
-                
-                # Count regulatory relationships
-                mirna_count = len(network.get('gene_mirna_correlations', []))
-                lncrna_count = len(network.get('gene_lncrna_correlations', []))
-                meth_count = len(network.get('gene_methylation_correlations', []))
-                
-                # Create bar plot
-                categories = ['miRNA', 'lncRNA', 'Methylation']
-                counts = [mirna_count, lncrna_count, meth_count]
-                
-                axes[i//2, i%2].bar(categories, counts, alpha=0.7, color=['blue', 'green', 'red'])
-                axes[i//2, i%2].set_title(f'{context.replace("_", " ").title()} Network')
-                axes[i//2, i%2].set_ylabel('Number of Regulatory Relationships')
-                
-                # Add value labels
-                for j, count in enumerate(counts):
-                    axes[i//2, i%2].text(j, count + 1, str(count), ha='center', va='bottom', fontweight='bold')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "context_networks.png"), dpi=300, bbox_inches='tight')
-        plt.close()
+        try:
+            if 'context_dependent' not in self.results:
+                print("    ⚠️  No context-dependent results available for plotting")
+                return
+            context_networks = self.results['context_dependent'].get('context_networks', {})
+            if not context_networks:
+                print("    ⚠️  No context networks available for plotting")
+                return
+            fig, axes = plt.subplots(2,2, figsize=(15,12))
+            contexts = list(context_networks.keys())
+            for i, context in enumerate(contexts[:4]):
+                try:
+                    network = context_networks.get(context, {})
+                    mirna_count = len(network.get('gene_mirna_correlations', []))
+                    lncrna_count = len(network.get('gene_lncrna_correlations', []))
+                    meth_count = len(network.get('gene_methylation_correlations', []))
+                    categories = ['miRNA','lncRNA','Methylation']
+                    counts = [mirna_count, lncrna_count, meth_count]
+                    axes[i//2, i%2].bar(categories, counts, alpha=0.7, color=['blue','green','red'])
+                    axes[i//2, i%2].set_title(f'{context.replace("_"," ").title()} Network')
+                    axes[i//2, i%2].set_ylabel('Number of Regulatory Relationships')
+                    for j,c in enumerate(counts):
+                        axes[i//2, i%2].text(j, c+1, str(c), ha='center', va='bottom', fontweight='bold')
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting {context} network: {e}")
+                    axes[i//2, i%2].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[i//2, i%2].transAxes)
+            plt.tight_layout()
+            try:
+                path = os.path.join(self.plots_dir, "context_networks.png")
+                plt.savefig(path, dpi=300, bbox_inches='tight')
+                print(f"    ✅ Saved context networks plot: {path}")
+            except Exception as e:
+                print(f"    ❌ Error saving plot: {e}")
+            finally:
+                plt.close()
+        except Exception as e:
+            print(f"    ❌ Error in plot_context_networks: {e}")
+            try:
+                plt.close('all')
+            except:  # noqa
+                pass
         
     def plot_interaction_improvements(self):
-        """Plot interaction improvement distributions."""
-        if 'context_dependent' not in self.results:
-            return
-            
-        # Create improvement comparison plots
-        fig, axes = plt.subplots(1, 2, figsize=(15, 6))
-        
-        # Compare improvements across interaction types
-        meth_mirna = self.results['context_dependent']['methylation_mirna_context']
-        lncrna_mirna = self.results['context_dependent']['lncrna_mirna_context']
-        
-        if not meth_mirna.empty and not lncrna_mirna.empty:
-            # Box plot comparison
-            data_to_plot = [
-                meth_mirna['improvement_from_interaction'].dropna(),
-                lncrna_mirna['improvement_from_interaction'].dropna()
-            ]
-            
-            axes[0].boxplot(data_to_plot, labels=['Methylation-miRNA', 'lncRNA-miRNA'])
-            axes[0].set_title('Interaction Improvement Comparison')
-            axes[0].set_ylabel('Improvement from Interaction')
-            axes[0].grid(True, alpha=0.3)
-            
-            # Context strength comparison
-            data_to_plot = [
-                meth_mirna['context_strength'].dropna(),
-                lncrna_mirna['context_strength'].dropna()
-            ]
-            
-            axes[1].boxplot(data_to_plot, labels=['Methylation-miRNA', 'lncRNA-miRNA'])
-            axes[1].set_title('Context Strength Comparison')
-            axes[1].set_ylabel('Context Strength')
-            axes[1].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "interaction_improvements.png"), dpi=300, bbox_inches='tight')
-        plt.close()
+        try:
+            if 'context_dependent' not in self.results:
+                print("    ⚠️  No context-dependent results available for plotting")
+                return
+            fig, axes = plt.subplots(1,2, figsize=(15,6))
+            meth_mirna = self.results['context_dependent'].get('methylation_mirna_context', pd.DataFrame())
+            lncrna_mirna = self.results['context_dependent'].get('lncrna_mirna_context', pd.DataFrame())
+            if not meth_mirna.empty and not lncrna_mirna.empty:
+                try:
+                    data1 = [meth_mirna['improvement_from_interaction'].dropna(), lncrna_mirna['improvement_from_interaction'].dropna()]
+                    axes[0].boxplot(data1, labels=['Methylation-miRNA','lncRNA-miRNA'])
+                    axes[0].set_title('Interaction Improvement Comparison')
+                    axes[0].set_ylabel('Improvement from Interaction')
+                    axes[0].grid(True, alpha=0.3)
+                    data2 = [meth_mirna['context_strength'].dropna(), lncrna_mirna['context_strength'].dropna()]
+                    axes[1].boxplot(data2, labels=['Methylation-miRNA','lncRNA-miRNA'])
+                    axes[1].set_title('Context Strength Comparison')
+                    axes[1].set_ylabel('Context Strength')
+                    axes[1].grid(True, alpha=0.3)
+                except Exception as e:
+                    print(f"    ⚠️  Error plotting improvements: {e}")
+                    axes[0].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[0].transAxes)
+                    axes[1].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[1].transAxes)
+            else:
+                axes[0].text(0.5,0.5,'No Data', ha='center', va='center', transform=axes[0].transAxes)
+                axes[1].text(0.5,0.5,'No Data', ha='center', va='center', transform=axes[1].transAxes)
+                axes[0].set_title('Interaction Improvement Comparison')
+                axes[1].set_title('Context Strength Comparison')
+            plt.tight_layout()
+            try:
+                path = os.path.join(self.plots_dir, "interaction_improvements.png")
+                plt.savefig(path, dpi=300, bbox_inches='tight')
+                print(f"    ✅ Saved interaction improvements plot: {path}")
+            except Exception as e:
+                print(f"    ❌ Error saving plot: {e}")
+            finally:
+                plt.close()
+        except Exception as e:
+            print(f"    ❌ Error in plot_interaction_improvements: {e}")
+            try:
+                plt.close('all')
+            except:  # noqa
+                pass
         
     def save_context_results(self):
         """Save all context-dependent analysis results."""
@@ -1059,22 +1002,30 @@ class OptimizedContextDependentRegulationAnalysis:
         print(f"✅ All context-dependent results saved to {self.tables_dir}/")
         
     def generate_markdown_report(self):
-        """Generate comprehensive markdown report with results, visuals, and tables."""
+        """Generate comprehensive markdown report (mode-aware)."""
         print("\n" + "="*60)
         print("GENERATING MARKDOWN REPORT")
         print("="*60)
-        
-        report_path = os.path.join(self.reports_dir, "context_dependent_analysis_report.md")
+        if self.mode == 'full':
+            report_filename = "context_dependent_analysis_report.md"
+            title = "Context-Dependent Regulation Analysis Report"
+        else:
+            report_filename = "subset_context_dependent_analysis_report.md"
+            title = "Subset Context-Dependent Regulation Analysis Report"
+        report_path = os.path.join(self.reports_dir, report_filename)
         
         with open(report_path, 'w') as f:
             # Header
-            f.write("# Context-Dependent Regulation Analysis Report\n\n")
+            f.write(f"# {title}\n\n")
             f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"**Analysis ID:** {self.timestamp}\n\n")
             
             # Executive Summary
             f.write("## Executive Summary\n\n")
-            f.write("This report presents the results of context-dependent regulatory interaction analysis between:\n")
+            if self.mode == 'full':
+                f.write("This report presents the results of context-dependent regulatory interaction analysis between:\n")
+            else:
+                f.write("This report presents the results of subset context-dependent regulatory interaction analysis between:\n")
             f.write("- Gene expression\n")
             f.write("- miRNA expression\n")
             f.write("- lncRNA expression\n")
@@ -1194,7 +1145,10 @@ class OptimizedContextDependentRegulationAnalysis:
             
             # Conclusion
             f.write("## Conclusion\n\n")
-            f.write("This analysis successfully identified context-dependent regulatory interactions using optimized parallel processing.\n")
+            if self.mode == 'full':
+                f.write("This analysis successfully identified context-dependent regulatory interactions using optimized parallel processing.\n")
+            else:
+                f.write("This subset analysis successfully identified context-dependent regulatory interactions using optimized parallel processing.\n")
             f.write("The results provide insights into how different regulatory layers interact in a context-specific manner.\n\n")
             
             # Footer
@@ -1204,13 +1158,16 @@ class OptimizedContextDependentRegulationAnalysis:
         print(f"✅ Markdown report generated: {report_path}")
         
     def generate_html_report(self):
-        """Generate HTML report with embedded images."""
+        """Generate HTML report with embedded images (mode-aware)."""
         print("\n" + "="*60)
         print("GENERATING HTML REPORT")
         print("="*60)
-        
-        html_report_path = os.path.join(self.reports_dir, "context_dependent_analysis_report.html")
-        md_report_path = os.path.join(self.reports_dir, "context_dependent_analysis_report.md")
+        if self.mode == 'full':
+            html_report_path = os.path.join(self.reports_dir, "context_dependent_analysis_report.html")
+            md_report_path = os.path.join(self.reports_dir, "context_dependent_analysis_report.md")
+        else:
+            html_report_path = os.path.join(self.reports_dir, "subset_context_dependent_analysis_report.html")
+            md_report_path = os.path.join(self.reports_dir, "subset_context_dependent_analysis_report.md")
         
         # Read the markdown content
         if not os.path.exists(md_report_path):
@@ -1425,11 +1382,11 @@ class OptimizedContextDependentRegulationAnalysis:
                 print(f"  {context_name}: {total_relationships} regulatory relationships")
     
     def run_complete_context_analysis(self):
-        """Run the complete optimized context-dependent analysis."""
+        """Run the complete optimized context-dependent analysis (mode-aware)."""
         start_time = time.time()
         
         print("="*80)
-        print("🚀 OPTIMIZED CONTEXT-DEPENDENT REGULATION ANALYSIS")
+        print(f"🚀 OPTIMIZED CONTEXT-DEPENDENT REGULATION ANALYSIS ({self.mode.upper()} MODE)")
         print("="*80)
         print("This optimized analysis utilizes:")
         print(f"  • {self.n_jobs} parallel CPU cores")
@@ -1462,12 +1419,25 @@ class OptimizedContextDependentRegulationAnalysis:
         print("🎉 OPTIMIZED CONTEXT-DEPENDENT ANALYSIS COMPLETED SUCCESSFULLY!")
         print("="*80)
 
-def main():
-    """Main function to run the optimized context-dependent analysis."""
-    # Initialize optimized analysis
-    analysis = OptimizedContextDependentRegulationAnalysis()
-    
-    # Run complete analysis
+def main(mode: str = None):
+    """Main entry point with optional mode parameter and CLI prompt."""
+    if mode is None:
+        import argparse
+        parser = argparse.ArgumentParser(description="Unified context-dependent regulation analysis")
+        parser.add_argument('--mode', choices=['full','subset'], help="Run mode: full or subset", default=None)
+        parser.add_argument('--n-jobs', type=int, default=None, help="Number of parallel workers")
+        args = parser.parse_args()
+        mode = args.mode
+        n_jobs = args.n_jobs
+    else:
+        n_jobs = None
+    if mode is None:
+        try:
+            user_input = input("Run mode? (full/subset) [full]: ").strip().lower()
+            mode = user_input if user_input in ('full','subset') else 'full'
+        except EOFError:
+            mode = 'full'
+    analysis = OptimizedContextDependentRegulationAnalysis(mode=mode, n_jobs=n_jobs)
     analysis.run_complete_context_analysis()
 
 if __name__ == "__main__":
