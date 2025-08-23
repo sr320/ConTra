@@ -1,0 +1,7 @@
+Dataset: lncrna_counts
+Features: 20
+Samples: 8
+Sample IDs: L1-TP1, L1-TP2, L2-TP1, L2-TP2, L3-TP1, L3-TP2, L4-TP1, L4-TP2
+Total non-zero values: 160
+Mean expression per feature: 77.90
+Std expression per feature: 5.32

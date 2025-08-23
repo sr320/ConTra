@@ -234,6 +234,49 @@ output/
 3. **Network Visualizations**: Context-specific regulatory network graphs
 4. **Statistical Reports**: Detailed analysis with interaction improvements and significance tests
 
+## 🧪 Pipeline Validation
+
+ConTra includes a comprehensive validation system using a C. elegans test dataset with known regulatory interactions:
+
+### Quick Validation
+```bash
+# Run complete validation workflow
+python3 code/run_validation_workflow.py
+
+# Expected results:
+# ✅ Sensitivity: ≥ 0.8 (detects known interactions)
+# ✅ Specificity: ≥ 0.8 (low false positive rate)
+# ✅ VALIDATION PASSED
+```
+
+### Test Dataset Features
+- **Organism**: *C. elegans* developmental time series
+- **Known interactions**: let-7 and lin-4 miRNA regulatory cascades
+- **Sample structure**: L1-L4 larval stages with time points
+- **Multi-omics**: Gene expression, lncRNA, miRNA, DNA methylation
+- **Validation criteria**: Literature-validated regulatory relationships
+
+### Manual Validation Steps
+```bash
+# 1. Create test dataset
+python3 code/create_celegans_test_dataset.py
+
+# 2. Install test data (backup original first)
+cp -r data/cleaned_datasets data/cleaned_datasets_backup
+cp data/test_datasets/celegans_modENCODE/*.csv data/cleaned_datasets/
+
+# 3. Run analysis
+cd code && python3 subset_context_dependent_analysis.py
+
+# 4. Validate results
+python3 code/validate_celegans_results.py output/subset_context_dependent_analysis_*/
+
+# 5. Restore original data
+rm -rf data/cleaned_datasets && mv data/cleaned_datasets_backup data/cleaned_datasets
+```
+
+See [docs/validation_guide.md](docs/validation_guide.md) for detailed validation instructions.
+
 ## 🤝 Contributing
 
 We welcome contributions from the community! Whether you're a

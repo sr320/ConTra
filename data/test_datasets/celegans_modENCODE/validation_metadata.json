@@ -1,0 +1,82 @@
+{
+  "organism": "Caenorhabditis elegans",
+  "data_source": "Synthetic modENCODE-like dataset",
+  "developmental_stages": [
+    "L1-TP1",
+    "L1-TP2",
+    "L2-TP1",
+    "L2-TP2",
+    "L3-TP1",
+    "L3-TP2",
+    "L4-TP1",
+    "L4-TP2"
+  ],
+  "known_interactions": {
+    "let-7_pathway": {
+      "miRNA": "let-7",
+      "targets": [
+        "lin-41",
+        "hbl-1",
+        "daf-12"
+      ],
+      "stage_specific": [
+        "L3-TP2",
+        "L4-TP1",
+        "L4-TP2"
+      ],
+      "interaction_type": "negative_regulation"
+    },
+    "lin-4_cascade": {
+      "miRNA": "lin-4",
+      "targets": [
+        "lin-14",
+        "lin-28"
+      ],
+      "stage_specific": [
+        "L1-TP2",
+        "L2-TP1"
+      ],
+      "interaction_type": "negative_regulation"
+    },
+    "developmental_timing": {
+      "lncRNAs": [
+        "lincRNA-1",
+        "lincRNA-2"
+      ],
+      "targets": [
+        "cog-1",
+        "unc-3"
+      ],
+      "methylation_sites": [
+        "chr1:1000-2000",
+        "chr2:5000-6000"
+      ],
+      "stage_specific": "all"
+    }
+  },
+  "validation_criteria": {
+    "sensitivity_threshold": 0.8,
+    "specificity_threshold": 0.8,
+    "statistical_significance": 0.05
+  },
+  "expected_results": {
+    "let-7_targets_downregulated": [
+      "lin-41",
+      "hbl-1"
+    ],
+    "lin-4_targets_downregulated": [
+      "lin-14",
+      "lin-28"
+    ],
+    "stage_specific_interactions": {
+      "L1-L2": [
+        "lin-4 -> lin-14",
+        "lin-4 -> lin-28"
+      ],
+      "L3-L4": [
+        "let-7 -> lin-41",
+        "let-7 -> hbl-1"
+      ]
+    }
+  }
+}
