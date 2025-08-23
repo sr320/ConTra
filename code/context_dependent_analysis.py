@@ -751,7 +751,11 @@ class OptimizedContextDependentRegulationAnalysis:
             sentinel = self.datasets['mirna'].index[0]
             vals = self.datasets['mirna'].loc[sentinel].values
             z = StandardScaler().fit_transform(vals.reshape(-1,1)).ravel()
-            context_mask = z > threshold if threshold > 0 else z < abs(threshold)
+            # Correct logic: for low_mirna with threshold -0.5 we want z < -0.5 (not z < 0.5)
+            if threshold > 0:  # high_mirna
+                context_mask = z > threshold
+            else:  # low_mirna (threshold negative)
+                context_mask = z < threshold
         elif 'high_methylation' in context_name:
             sentinel = self.datasets['methylation'].index[0]
             vals = self.datasets['methylation'].loc[sentinel].values
@@ -760,6 +764,7 @@ class OptimizedContextDependentRegulationAnalysis:
         else:
             context_mask = np.ones(len(self.samples), dtype=bool)
         context_samples = [col for i, col in enumerate(self.datasets['gene'].columns) if context_mask[i]]
+        print(f"      • {context_name} selected {len(context_samples)} samples (threshold={threshold})")
         if len(context_samples) < 10:
             return context_networks
         gene_chunks = np.array_split(sampled_genes, min(self.n_jobs, len(sampled_genes)))
