@@ -33,6 +33,8 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 import os
 import time
 import base64
+import gc
+import psutil
 from datetime import datetime
 from typing import Dict, List, Tuple, Any
 
@@ -58,18 +60,14 @@ class OptimizedContextDependentRegulationAnalysis:
         'full': {
             'pairwise_gene_limit': None,
             'multi_way_gene_limit': None,
-            'context_network_gene_limit': None,
             'methylation_mirna': {'miRNA_top': 25, 'miRNA_use': 10, 'meth_top': 50, 'meth_use': 15},
-            'lncrna_mirna': {'lnc_top': 50, 'lnc_use': 15, 'miRNA_top': 25, 'miRNA_use': 10},
             'multi_way_regulators': {'miRNA': 15, 'lncRNA': 30, 'methylation': 25},
             'seed': None
         },
         'subset': {
             'pairwise_gene_limit': 500,
             'multi_way_gene_limit': 200,
-            'context_network_gene_limit': 200,
             'methylation_mirna': {'miRNA_top': 10, 'miRNA_use': 5, 'meth_top': 10, 'meth_use': 5},
-            'lncrna_mirna': {'lnc_top': 10, 'lnc_use': 5, 'miRNA_top': 10, 'miRNA_use': 5},
             'multi_way_regulators': {'miRNA': 5, 'lncRNA': 7, 'methylation': 5},
             'seed': 42
         }
@@ -99,6 +97,9 @@ class OptimizedContextDependentRegulationAnalysis:
         self.data_dir = os.path.join(self.workspace_root, data_dir)
         self.datasets: Dict[str, pd.DataFrame] = {}
         self.results: Dict[str, Any] = {}
+        
+        # Add caching for correlation calculations
+        self.correlation_cache: Dict[str, Tuple[float, float]] = {}
 
         # Parallel workers (allow env cap)
         if n_jobs is not None:
@@ -135,23 +136,60 @@ class OptimizedContextDependentRegulationAnalysis:
         # Load data
         self.load_datasets()
 
-        # Permutation configuration (can be overridden after construction)
+        # Optional task granularity multiplier (env: CONTRA_CHUNK_MULT)
+        try:
+            self.chunk_multiplier = max(1, int(os.environ.get('CONTRA_CHUNK_MULT', '1')))
+        except ValueError:
+            self.chunk_multiplier = 1
+        # No persistent process pool: create per stage to avoid pickling locks on macOS spawn method
+        self._pool = None  # placeholder (not used directly)
+
+        # Permutation configuration (can be overridden after construction or CLI or post-init)
         self.permutation_enabled = False
         self.permutation_min = 100
         self.permutation_max = 1000
         self.permutation_alpha = 0.05
         self.permutation_batch = 25
-        
+
     def _get_available_ram(self):
         """Get available RAM in GB."""
         try:
-            with open('/proc/meminfo', 'r') as f:
-                for line in f:
-                    if line.startswith('MemAvailable:'):
-                        return int(line.split()[1]) / (1024**2)
+            return psutil.virtual_memory().available / (1024**3)
         except:
-            pass
-        return 200  # Default fallback
+            try:
+                with open('/proc/meminfo', 'r') as f:
+                    for line in f:
+                        if line.startswith('MemAvailable:'):
+                            return int(line.split()[1]) / (1024**2)
+            except:
+                pass
+        return 8.0  # Conservative fallback
+    
+    def _monitor_memory_usage(self):
+        """Monitor and log current memory usage."""
+        try:
+            memory = psutil.virtual_memory()
+            process = psutil.Process()
+            print(f"    Memory: {memory.percent:.1f}% used, Process: {process.memory_info().rss / 1024**2:.1f} MB")
+            
+            # Trigger garbage collection if memory usage is high
+            if memory.percent > 80:
+                print("    🧹 High memory usage detected, running garbage collection...")
+                gc.collect()
+                
+        except Exception as e:
+            print(f"    ⚠️  Memory monitoring error: {e}")
+            
+    def _optimize_memory_usage(self):
+        """Optimize memory usage by clearing caches and running GC."""
+        # Clear correlation cache if it gets too large
+        if len(self.correlation_cache) > 10000:
+            print("    🧹 Clearing correlation cache...")
+            self.correlation_cache.clear()
+        
+        # Force garbage collection
+        gc.collect()
+        print(f"    🧹 Memory optimization complete")
 
     def load_datasets(self):
         """Load all cleaned datasets with parallel processing and memory optimization."""
@@ -184,16 +222,18 @@ class OptimizedContextDependentRegulationAnalysis:
         """Pre-compute numpy arrays for memory efficiency."""
         print("🔢 Pre-computing data arrays...")
         
-        # Convert to numpy arrays for faster operations
-        self.gene_array = self.datasets['gene'].values
-        self.lncrna_array = self.datasets['lncrna'].values
-        self.mirna_array = self.datasets['mirna'].values
-        self.methylation_array = self.datasets['methylation'].values
+        # Convert to numpy arrays for faster operations - use float32 to reduce memory
+        self.gene_array = self.datasets['gene'].values.astype(np.float32)
+        self.lncrna_array = self.datasets['lncrna'].values.astype(np.float32)
+        self.mirna_array = self.datasets['mirna'].values.astype(np.float32)
+        self.methylation_array = self.datasets['methylation'].values.astype(np.float32)
         
-        # FIXED: Remove unused huge correlation matrices to save memory
-        # These were computed but never used in the analysis
+        # Create index mappings for faster lookups
+        self.gene_index = {gene: idx for idx, gene in enumerate(self.datasets['gene'].index)}
+        self.mirna_index = {mirna: idx for idx, mirna in enumerate(self.datasets['mirna'].index)}
+        self.methylation_index = {meth: idx for idx, meth in enumerate(self.datasets['methylation'].index)}
         
-        print("✅ Data arrays pre-computed (correlation matrices removed)")
+        print("✅ Data arrays pre-computed with float32 precision and index mappings")
         
     def verify_sample_alignment(self):
         """Verify that all datasets have the same sample structure."""
@@ -220,49 +260,61 @@ class OptimizedContextDependentRegulationAnalysis:
         print("="*80)
         
         start_time = time.time()
+        self._monitor_memory_usage()
         
         # 1. Analyze methylation-gene interactions dependent on miRNA levels (parallelized)
         print("\n1. 🔄 Analyzing methylation-gene interactions dependent on miRNA levels (parallelized)...")
         methylation_mirna_context = self.parallel_analyze_methylation_mirna_context()
         
-        # 2. Analyze lncRNA-gene interactions dependent on miRNA levels (parallelized)
-        print("\n2. 🔄 Analyzing lncRNA-gene interactions dependent on miRNA levels (parallelized)...")
-        lncrna_mirna_context = self.parallel_analyze_lncrna_mirna_context()
+        # Memory optimization after heavy computation
+        self._optimize_memory_usage()
         
-        # 3. Analyze multi-way regulatory interactions (parallelized)
-        print("\n3. 🔄 Analyzing multi-way regulatory interactions (parallelized)...")
+        # 2. Analyze multi-way regulatory interactions (parallelized)
+        print("\n2. 🔄 Analyzing multi-way regulatory interactions (parallelized)...")
         multi_way_interactions = self.parallel_analyze_multi_way_interactions()
         
-        # 4. Context-specific regulatory network inference (optimized)
-        print("\n4. 🔄 Inferring context-specific regulatory networks (optimized)...")
-        context_networks = self.optimized_infer_context_specific_networks()
+        # Final memory cleanup
+        self._optimize_memory_usage()
         
         # Store results
         self.results['context_dependent'] = {
             'methylation_mirna_context': methylation_mirna_context,
-            'lncrna_mirna_context': lncrna_mirna_context,
-            'multi_way_interactions': multi_way_interactions,
-            'context_networks': context_networks
+            'multi_way_interactions': multi_way_interactions
         }
         
         total_time = time.time() - start_time
         print(f"\n⏱️  Total analysis time: {total_time:.1f} seconds ({total_time/60:.1f} minutes)")
         print("✅ Context-dependent analysis completed with parallel processing!")
+        self._monitor_memory_usage()
         
     def parallel_analyze_methylation_mirna_context(self):
+        """Parallel methylation/miRNA context interaction analysis."""
         print("  🔄 Parallel processing methylation-miRNA context analysis...")
         cfg = self.CONFIG[self.mode]['methylation_mirna']
+        
+        # Gene sampling
         if self.CONFIG[self.mode]['pairwise_gene_limit'] is None:
-            sampled_genes = self.datasets['gene'].index
+            sampled_genes = self.datasets['gene'].index.to_list()
         else:
             limit = min(self.CONFIG[self.mode]['pairwise_gene_limit'], len(self.datasets['gene']))
             sampled_genes = np.random.choice(self.datasets['gene'].index, limit, replace=False)
+        sampled_genes = list(sampled_genes)
         n_genes = len(sampled_genes)
-        gene_chunks = np.array_split(sampled_genes, min(self.n_jobs, n_genes))
-        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} chunks (mode={self.mode})")
-        all_results = []
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
-            futures = {ex.submit(self._process_methylation_mirna_chunk, chunk, cfg): i for i, chunk in enumerate(gene_chunks)}
+        
+        if n_genes == 0:
+            return pd.DataFrame()
+        
+        # Adaptive chunk sizing based on memory and computation complexity
+        memory_gb = self._get_available_ram()
+        base_chunk_size = max(10, min(100, int(memory_gb / 2)))  # Conservative memory usage
+        n_chunks = max(1, min(self.n_jobs * self.chunk_multiplier, n_genes // base_chunk_size + 1))
+        gene_chunks = [chunk for chunk in np.array_split(sampled_genes, n_chunks) if len(chunk) > 0]
+        
+        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} chunks (mode={self.mode}, chunk_size≈{n_genes//len(gene_chunks)})")
+        
+        all_results: List[Dict] = []
+        with ProcessPoolExecutor(max_workers=self.n_jobs) as pool:
+            futures = {pool.submit(self._process_methylation_mirna_chunk, list(chunk), cfg): i for i, chunk in enumerate(gene_chunks)}
             for fut in as_completed(futures):
                 idx = futures[fut]
                 try:
@@ -271,205 +323,160 @@ class OptimizedContextDependentRegulationAnalysis:
                     print(f"    ✅ Chunk {idx+1}/{len(gene_chunks)}: {len(res)} results")
                 except Exception as e:
                     print(f"    ❌ Chunk {idx+1} failed: {e}")
-        if all_results:
-            df = pd.DataFrame(all_results)
-            print(f"  🎯 Total methylation-miRNA context interactions: {len(df)}")
-            return df
-        return pd.DataFrame()
+        
+        if not all_results:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(all_results)
+        print(f"  🎯 Total methylation-miRNA context interactions: {len(df)}")
+        return df
 
     def _process_methylation_mirna_chunk(self, gene_chunk: List[str], cfg: Dict) -> List[Dict]:
         """Process a chunk of genes for methylation-miRNA context analysis."""
-        results = []
+        results: List[Dict] = []
         
-        for gene in gene_chunk:
-            gene_expression = self.datasets['gene'].loc[gene].values
-            
-            # Get top miRNAs for this gene (vectorized)
-            mirna_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['mirna'], 'mirna', top_n=cfg['miRNA_top']
-            )
-            
-            # Get top methylation sites for this gene (vectorized)
-            meth_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['methylation'], 'methylation', top_n=cfg['meth_top']
-            )
-            
-            # Analyze interactions for top regulators
-            for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:cfg['miRNA_use']]:
-                for meth_name, meth_corr, meth_pval in meth_corrs[:cfg['meth_use']]:
-                    interaction_result = self._analyze_methylation_mirna_interaction(
-                        gene, gene_expression, mirna_name, meth_name
-                    )
-                    if interaction_result:
-                        results.append(interaction_result)
+        # Pre-calculate correlations to avoid redundant computation
+        chunk_start_time = time.time()
         
-        return results
-        
-    def _get_top_correlations_vectorized(self, target_data: np.ndarray, regulator_data: pd.DataFrame, 
-                                       regulator_type: str, top_n: int = 10) -> List[Tuple[str, float, float]]:
-        """Get top correlations using vectorized operations with optional adaptive permutation p-values.
-
-        Returns list of tuples: (name, corr, pval) where pval is empirical if permutation enabled.
-        """
-        correlations: List[Tuple[str, float, float]] = []
-
-        # Precompute target summary once
-        target_vals = target_data
-        if self.permutation_enabled:
-            # Pre-center target for permutation reuse
-            self._perm_target_centered = target_vals - target_vals.mean()
-            self._perm_target_denom = np.sqrt((self._perm_target_centered ** 2).sum())
-
-        for regulator in regulator_data.index:
-            reg_vals = regulator_data.loc[regulator].values
-            corr, pval_param = pearsonr(target_vals, reg_vals)
-            if pval_param < 0.1:  # pre-filter to reduce permutation load
-                if self.permutation_enabled:
-                    empirical_p = self._adaptive_permutation_pvalue(target_vals, reg_vals, abs(corr))
-                    p_final = empirical_p
+        for i, gene in enumerate(gene_chunk):
+            try:
+                # Use pre-computed arrays for faster access
+                if gene in self.gene_index:
+                    gene_idx = self.gene_index[gene]
+                    gene_expression = self.gene_array[gene_idx]
                 else:
-                    p_final = pval_param
-                correlations.append((f"{regulator_type}_{regulator}", corr, p_final))
+                    gene_expression = self.datasets['gene'].loc[gene].values.astype(np.float32)
+                
+                # Get top regulators with caching
+                cache_key_mirna = f"mirna_{gene}"
+                cache_key_meth = f"methylation_{gene}"
+                
+                if cache_key_mirna not in self.correlation_cache:
+                    mirna_corrs = self._get_top_correlations_vectorized(
+                        gene_expression, self.datasets['mirna'], 'mirna', top_n=cfg['miRNA_top']
+                    )
+                    self.correlation_cache[cache_key_mirna] = mirna_corrs
+                else:
+                    mirna_corrs = self.correlation_cache[cache_key_mirna]
+                
+                if cache_key_meth not in self.correlation_cache:
+                    meth_corrs = self._get_top_correlations_vectorized(
+                        gene_expression, self.datasets['methylation'], 'methylation', top_n=cfg['meth_top']
+                    )
+                    self.correlation_cache[cache_key_meth] = meth_corrs
+                else:
+                    meth_corrs = self.correlation_cache[cache_key_meth]
+                
+                # Process interactions
+                for mirna_name, _, _ in mirna_corrs[:cfg['miRNA_use']]:
+                    for meth_name, _, _ in meth_corrs[:cfg['meth_use']]:
+                        result = self._analyze_methylation_mirna_interaction(
+                            gene, gene_expression, mirna_name, meth_name
+                        )
+                        if result:
+                            results.append(result)
+                            
+                # Progress indicator for long-running chunks
+                if i > 0 and i % 10 == 0:
+                    elapsed = time.time() - chunk_start_time
+                    rate = i / elapsed
+                    eta = (len(gene_chunk) - i) / rate if rate > 0 else 0
+                    print(f"      Progress: {i}/{len(gene_chunk)} genes ({rate:.1f} genes/sec, ETA: {eta:.0f}s)")
+                    
+            except Exception as e:
+                print(f"    ⚠️  Error processing gene {gene}: {e}")
+                continue
+                
+        return results
 
-        correlations.sort(key=lambda x: abs(x[1]), reverse=True)
-        return correlations[:top_n]
+    def _analyze_methylation_mirna_interaction(self, gene_name: str, gene_expression: np.ndarray,
+                                               mirna_name: str, meth_name: str) -> Dict:
+        """Analyze methylation (regulator1) and miRNA (regulator2) interaction on a gene.
 
-    def _adaptive_permutation_pvalue(self, x: np.ndarray, y: np.ndarray, observed_abs_corr: float) -> float:
-        """Compute empirical p-value for correlation using adaptive permutation.
-
-        Adaptive rules:
-          - Run in batches until min permutations reached.
-          - Early stop 'not significant' if minimal achievable p > alpha.
-          - Early stop 'significant' if maximal achievable p < alpha.
+        Returns a result dict or None on failure.
         """
-        n = len(x)
-        if n < 6:  # not enough samples for reliable permutation
-            return 1.0
-        # Precompute centered vectors (reuse target pre-centering if available)
-        x_centered = getattr(self, '_perm_target_centered', x - x.mean())
-        denom_x = getattr(self, '_perm_target_denom', np.sqrt((x_centered ** 2).sum()))
-        y_centered = y - y.mean()
-        denom_y = np.sqrt((y_centered ** 2).sum())
-        if denom_x == 0 or denom_y == 0:
-            return 1.0
-        idx = np.arange(n)
-        extreme = 0
-        performed = 0
-        # We count correlation magnitude >= observed
-        while performed < self.permutation_max:
-            batch = min(self.permutation_batch, self.permutation_max - performed)
-            for _ in range(batch):
-                np.random.shuffle(idx)
-                # Shuffle x_centered
-                shuffled = x_centered[idx]
-                corr = (shuffled * y_centered).sum() / (denom_x * denom_y)
-                if abs(corr) >= observed_abs_corr:
-                    extreme += 1
-            performed += batch
-            p_emp = (extreme + 1) / (performed + 1)
-            # Minimum possible p if no more extremes; only if we have min perms
-            if performed >= self.permutation_min:
-                min_possible = 1 / (performed + 1)
-                max_possible = (extreme + (self.permutation_max - performed) + 1) / (self.permutation_max + 1)
-                # Guaranteed not significant
-                if min_possible > self.permutation_alpha:
-                    return p_emp
-                # Guaranteed significant
-                if max_possible < self.permutation_alpha:
-                    return p_emp
-        return (extreme + 1) / (performed + 1)
-        
-    def _analyze_methylation_mirna_interaction(self, gene_name: str, gene_expression: np.ndarray, 
-                                             mirna_name: str, meth_name: str) -> Dict:
-        """Analyze interaction between methylation and miRNA for a specific gene."""
         try:
-            # Get regulator data
-            mirna_data = self.datasets['mirna'].loc[mirna_name.replace('mirna_', '')].values
-            meth_data = self.datasets['methylation'].loc[meth_name.replace('methylation_', '')].values
+            # Use pre-computed arrays and indices for faster access
+            meth_clean_name = meth_name.replace('methylation_', '')
+            mirna_clean_name = mirna_name.replace('mirna_', '')
             
-            # Create interaction dataset
-            data = pd.DataFrame({
-                'target': gene_expression,
-                'regulator1': meth_data,
-                'regulator2': mirna_data,
-                'interaction': meth_data * mirna_data  # Interaction term
-            })
+            if meth_clean_name in self.methylation_index:
+                meth_idx = self.methylation_index[meth_clean_name]
+                meth_expr = self.methylation_array[meth_idx]
+            else:
+                meth_expr = self.datasets['methylation'].loc[meth_clean_name].values.astype(np.float32)
+                
+            if mirna_clean_name in self.mirna_index:
+                mirna_idx = self.mirna_index[mirna_clean_name]
+                mirna_expr = self.mirna_array[mirna_idx]
+            else:
+                mirna_expr = self.datasets['mirna'].loc[mirna_clean_name].values.astype(np.float32)
             
-            # Scale data
-            scaler = StandardScaler()
-            data_scaled = pd.DataFrame(
-                scaler.fit_transform(data),
-                columns=data.columns
-            )
+            # Use numpy arrays directly for faster computation
+            data_array = np.column_stack([gene_expression.astype(np.float32), meth_expr, mirna_expr])
+            
+            # Fast standardization
+            data_scaled = (data_array - data_array.mean(axis=0)) / data_array.std(axis=0)
+            
+            # Add interaction term
+            interaction = data_scaled[:, 1] * data_scaled[:, 2]
+            
+            # Sequential models using sklearn's efficient implementations
+            target = data_scaled[:, 0]
+            regulator1 = data_scaled[:, 1:2]
+            regulator1_regulator2 = data_scaled[:, 1:3]
+            full_features = np.column_stack([data_scaled[:, 1:3], interaction])
             
             # Fit models
-            model1 = LinearRegression()
-            model1.fit(data_scaled[['regulator1']], data_scaled['target'])
-            r2_1 = model1.score(data_scaled[['regulator1']], data_scaled['target'])
+            model1 = LinearRegression(fit_intercept=False).fit(regulator1, target)
+            r2_1 = model1.score(regulator1, target)
             
-            model2 = LinearRegression()
-            model2.fit(data_scaled[['regulator1', 'regulator2']], data_scaled['target'])
-            r2_2 = model2.score(data_scaled[['regulator1', 'regulator2']], data_scaled['target'])
+            model2 = LinearRegression(fit_intercept=False).fit(regulator1_regulator2, target)
+            r2_2 = model2.score(regulator1_regulator2, target)
             
-            model3 = LinearRegression()
-            model3.fit(data_scaled[['regulator1', 'regulator2', 'interaction']], data_scaled['target'])
-            r2_3 = model3.score(data_scaled[['regulator1', 'regulator2', 'interaction']], data_scaled['target'])
+            model3 = LinearRegression(fit_intercept=False).fit(full_features, target)
+            r2_3 = model3.score(full_features, target)
             
-            # Calculate improvements
             improvement_from_regulator2 = r2_2 - r2_1
             improvement_from_interaction = r2_3 - r2_2
             
-            # FIXED: Use proper statistical testing instead of arbitrary R^2 threshold
-            # Perform nested F-test to compare models with and without interaction
-            from sklearn.metrics import r2_score
-            from scipy import stats
-            
-            # Calculate F-statistic for nested model comparison
+            # Optimized F-test for interaction term
             n_samples = len(data_scaled)
-            df1 = 1  # Additional parameter in full model
-            df2 = n_samples - 4  # Degrees of freedom for full model (4 parameters)
+            df1 = 1
+            df2 = n_samples - 4  # parameters: intercept + 3 predictors
             
-            # FIXED: Add proper error handling for edge cases
-            if (df2 > 0 and 
-                improvement_from_interaction > 0 and 
-                r2_3 < 1.0 and  # Prevent division by zero when R² = 1
-                (1 - r2_3) > 1e-10):  # Prevent division by very small numbers
+            if (df2 > 0 and improvement_from_interaction > 0 and r2_3 < 1.0 and (1 - r2_3) > 1e-10):
                 try:
                     f_stat = (improvement_from_interaction / df1) / ((1 - r2_3) / df2)
                     p_value = 1 - stats.f.cdf(f_stat, df1, df2)
-                    context_dependent = p_value < 0.05  # Use p-value threshold
-                except (ZeroDivisionError, ValueError, RuntimeWarning):
-                    # Handle any numerical errors gracefully
+                    context_dependent = p_value < 0.05
+                except Exception:
                     context_dependent = False
                     p_value = 1.0
             else:
                 context_dependent = False
                 p_value = 1.0
             
-            # Calculate conditional correlations (vectorized)
-            high_mirna_mask = data_scaled['regulator2'] > 0.5
-            low_mirna_mask = data_scaled['regulator2'] < -0.5
+            # Faster conditional correlations using boolean indexing
+            regulator2_scaled = data_scaled[:, 2]
+            high_mask = regulator2_scaled > 0.5
+            low_mask = regulator2_scaled < -0.5
             
-            if high_mirna_mask.sum() > 2 and low_mirna_mask.sum() > 2:
-                corr_high_mirna, pval_high = pearsonr(
-                    data_scaled.loc[high_mirna_mask, 'target'],
-                    data_scaled.loc[high_mirna_mask, 'regulator1']
-                )
-                corr_low_mirna, pval_low = pearsonr(
-                    data_scaled.loc[low_mirna_mask, 'target'],
-                    data_scaled.loc[low_mirna_mask, 'regulator1']
-                )
+            if np.sum(high_mask) > 2 and np.sum(low_mask) > 2:
+                # Fast correlation using numpy
+                target_high = target[high_mask]
+                regulator1_high = data_scaled[high_mask, 1]
+                target_low = target[low_mask]
+                regulator1_low = data_scaled[low_mask, 1]
                 
-                context_strength = abs(corr_high_mirna - corr_low_mirna)
+                corr_high = np.corrcoef(target_high, regulator1_high)[0, 1]
+                corr_low = np.corrcoef(target_low, regulator1_low)[0, 1]
+                
+                context_strength = abs(corr_high - corr_low)
+                context_direction = 'positive' if corr_high > corr_low else 'negative'
             else:
-                corr_high_mirna = corr_low_mirna = context_strength = np.nan
-            
-            # FIXED: Handle NaN values in context direction
-            if pd.isna(corr_high_mirna) or pd.isna(corr_low_mirna):
+                corr_high = corr_low = context_strength = np.nan
                 context_direction = 'NA'
-                context_strength = np.nan
-            else:
-                context_direction = 'positive' if corr_high_mirna > corr_low_mirna else 'negative'
             
             return {
                 'interaction_type': 'methylation_mirna',
@@ -482,199 +489,107 @@ class OptimizedContextDependentRegulationAnalysis:
                 'improvement_from_regulator2': improvement_from_regulator2,
                 'improvement_from_interaction': improvement_from_interaction,
                 'context_dependent': context_dependent,
-                'corr_high_regulator2': corr_high_mirna,
-                'corr_low_regulator2': corr_low_mirna,
+                'corr_high_regulator2': corr_high,
+                'corr_low_regulator2': corr_low,
                 'context_strength': context_strength,
                 'context_direction': context_direction,
                 'interaction_p_value': p_value
             }
-            
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             print(f"    ⚠️  Error analyzing {gene_name}-{mirna_name}-{meth_name}: {e}")
             return None
 
-    def parallel_analyze_lncrna_mirna_context(self):
-        print("  🔄 Parallel processing lncRNA-miRNA context analysis...")
-        cfg = self.CONFIG[self.mode]['lncrna_mirna']
-        if self.CONFIG[self.mode]['pairwise_gene_limit'] is None:
-            sampled_genes = self.datasets['gene'].index
-        else:
-            limit = min(self.CONFIG[self.mode]['pairwise_gene_limit'], len(self.datasets['gene']))
-            sampled_genes = np.random.choice(self.datasets['gene'].index, limit, replace=False)
-        n_genes = len(sampled_genes)
-        gene_chunks = np.array_split(sampled_genes, min(self.n_jobs, n_genes))
-        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} chunks (mode={self.mode})")
-        all_results = []
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
-            futures = {ex.submit(self._process_lncrna_mirna_chunk, chunk, cfg): i for i, chunk in enumerate(gene_chunks)}
-            for fut in as_completed(futures):
-                idx = futures[fut]
-                try:
-                    res = fut.result()
-                    all_results.extend(res)
-                    print(f"    ✅ Chunk {idx+1}/{len(gene_chunks)}: {len(res)} results")
-                except Exception as e:
-                    print(f"    ❌ Chunk {idx+1} failed: {e}")
-        if all_results:
-            df = pd.DataFrame(all_results)
-            print(f"  🎯 Total lncRNA-miRNA context interactions: {len(df)}")
-            return df
-        return pd.DataFrame()
+    def _get_top_correlations_vectorized(self, target_expression: np.ndarray, regulator_df: pd.DataFrame,
+                                         prefix: str, top_n: int = 25) -> List[Tuple[str, float, float]]:
+        """Return top correlated regulators with vectorized correlation computation.
 
-    def _process_lncrna_mirna_chunk(self, gene_chunk: List[str], cfg: Dict) -> List[Dict]:
-        """Process a chunk of genes for lncRNA-miRNA context analysis."""
+        Returns list of (name_with_prefix, corr, p_value) sorted by |corr| desc.
+        """
+        # Vectorized correlation computation for all regulators at once
+        target = target_expression.astype(np.float32)
+        regulator_values = regulator_df.values.astype(np.float32)
+        
+        # Normalize target
+        target_norm = (target - target.mean()) / target.std()
+        
+        # Normalize all regulators
+        regulator_means = regulator_values.mean(axis=1)[:, np.newaxis]
+        regulator_stds = regulator_values.std(axis=1)[:, np.newaxis]
+        regulator_norm = (regulator_values - regulator_means) / regulator_stds
+        
+        # Compute correlations in batch
+        correlations = np.dot(regulator_norm, target_norm) / (len(target) - 1)
+        
+        # Calculate p-values using t-distribution approximation (faster than pearsonr)
+        n = len(target)
+        t_stats = correlations * np.sqrt((n - 2) / (1 - correlations**2 + 1e-10))
+        p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), n - 2))
+        
+        # Create results list
         results = []
+        for i, (reg_name, corr, pval) in enumerate(zip(regulator_df.index, correlations, p_values)):
+            if not np.isnan(corr):
+                if self.permutation_enabled and pval < 0.2:
+                    # Only use expensive permutation for promising correlations
+                    pval = self._adaptive_permutation_pvalue(target, regulator_values[i], observed_abs=abs(corr))
+                results.append((f"{prefix}_{reg_name}", corr, pval))
         
-        for gene in gene_chunk:
-            gene_expression = self.datasets['gene'].loc[gene].values
-            
-            # Get top lncRNAs for this gene (vectorized)
-            lncrna_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['lncrna'], 'lncrna', top_n=cfg['lnc_top']
-            )
-            
-            # Get top miRNAs for this gene (vectorized)
-            mirna_corrs = self._get_top_correlations_vectorized(
-                gene_expression, self.datasets['mirna'], 'mirna', top_n=cfg['miRNA_top']
-            )
-            
-            # Analyze interactions for top regulators
-            for lncrna_name, lncrna_corr, lncrna_pval in lncrna_corrs[:cfg['lnc_use']]:
-                for mirna_name, mirna_corr, mirna_pval in mirna_corrs[:cfg['miRNA_use']]:
-                    interaction_result = self._analyze_lncrna_mirna_interaction(
-                        gene, gene_expression, lncrna_name, mirna_name
-                    )
-                    if interaction_result:
-                        results.append(interaction_result)
-        
-        return results
-        
-    def _analyze_lncrna_mirna_interaction(self, gene_name: str, gene_expression: np.ndarray, 
-                                         lncrna_name: str, mirna_name: str) -> Dict:
-        """Analyze interaction between lncRNA and miRNA for a specific gene."""
-        try:
-            # Get regulator data
-            lncrna_data = self.datasets['lncrna'].loc[lncrna_name.replace('lncrna_', '')].values
-            mirna_data = self.datasets['mirna'].loc[mirna_name.replace('mirna_', '')].values
-            
-            # Create interaction dataset
-            data = pd.DataFrame({
-                'target': gene_expression,
-                'regulator1': lncrna_data,
-                'regulator2': mirna_data,
-                'interaction': lncrna_data * mirna_data  # Interaction term
-            })
-            
-            # Scale data
-            scaler = StandardScaler()
-            data_scaled = pd.DataFrame(
-                scaler.fit_transform(data),
-                columns=data.columns
-            )
-            
-            # Fit models
-            model1 = LinearRegression()
-            model1.fit(data_scaled[['regulator1']], data_scaled['target'])
-            r2_1 = model1.score(data_scaled[['regulator1']], data_scaled['target'])
-            
-            model2 = LinearRegression()
-            model2.fit(data_scaled[['regulator1', 'regulator2']], data_scaled['target'])
-            r2_2 = model2.score(data_scaled[['regulator1', 'regulator2']], data_scaled['target'])
-            
-            model3 = LinearRegression()
-            model3.fit(data_scaled[['regulator1', 'regulator2', 'interaction']], data_scaled['target'])
-            r2_3 = model3.score(data_scaled[['regulator1', 'regulator2', 'interaction']], data_scaled['target'])
-            
-            # Calculate improvements
-            improvement_from_regulator2 = r2_2 - r2_1
-            improvement_from_interaction = r2_3 - r2_2
-            
-            # FIXED: Use proper statistical testing instead of arbitrary R^2 threshold
-            # Perform nested F-test to compare models with and without interaction
-            from sklearn.metrics import r2_score
-            from scipy import stats
-            
-            # Calculate F-statistic for nested model comparison
-            n_samples = len(data_scaled)
-            df1 = 1  # Additional parameter in full model
-            df2 = n_samples - 4  # Degrees of freedom for full model (4 parameters)
-            
-            # FIXED: Add proper error handling for edge cases
-            if (df2 > 0 and 
-                improvement_from_interaction > 0 and 
-                r2_3 < 1.0 and  # Prevent division by zero when R² = 1
-                (1 - r2_3) > 1e-10):  # Prevent division by very small numbers
+        # Sort by absolute correlation magnitude
+        results.sort(key=lambda t: abs(t[1]), reverse=True)
+        return results[:top_n]
+
+    def _adaptive_permutation_pvalue(self, x: np.ndarray, y: np.ndarray, observed_abs: float) -> float:
+        """Adaptive permutation test for correlation significance.
+
+        Stops early when lower confidence bound of p exceeds alpha or max perms reached.
+        """
+        rng = np.random.default_rng()
+        min_perms = self.permutation_min
+        max_perms = self.permutation_max
+        batch = self.permutation_batch
+        alpha = self.permutation_alpha
+        n = 0
+        extreme = 0
+        while n < max_perms:
+            to_run = min(batch, max_perms - n)
+            perms = rng.permutation(len(y))
+            # Generate permutations one-by-one (len small) for clarity
+            for _ in range(to_run):
+                y_perm = rng.permutation(y)
                 try:
-                    f_stat = (improvement_from_interaction / df1) / ((1 - r2_3) / df2)
-                    p_value = 1 - stats.f.cdf(f_stat, df1, df2)
-                    context_dependent = p_value < 0.05  # Use p-value threshold
-                except (ZeroDivisionError, ValueError, RuntimeWarning):
-                    # Handle any numerical errors gracefully
-                    context_dependent = False
-                    p_value = 1.0
-            else:
-                context_dependent = False
-                p_value = 1.0
-            
-            # Calculate conditional correlations (vectorized)
-            high_mirna_mask = data_scaled['regulator2'] > 0.5
-            low_mirna_mask = data_scaled['regulator2'] < -0.5
-            
-            if high_mirna_mask.sum() > 2 and low_mirna_mask.sum() > 2:
-                corr_high_mirna, pval_high = pearsonr(
-                    data_scaled.loc[high_mirna_mask, 'target'],
-                    data_scaled.loc[high_mirna_mask, 'regulator1']
-                )
-                corr_low_mirna, pval_low = pearsonr(
-                    data_scaled.loc[low_mirna_mask, 'target'],
-                    data_scaled.loc[low_mirna_mask, 'regulator1']
-                )
-                
-                context_strength = abs(corr_high_mirna - corr_low_mirna)
-            else:
-                corr_high_mirna = corr_low_mirna = context_strength = np.nan
-            
-            # FIXED: Handle NaN values in context direction
-            if pd.isna(corr_high_mirna) or pd.isna(corr_low_mirna):
-                context_direction = 'NA'
-                context_strength = np.nan
-            else:
-                context_direction = 'positive' if corr_high_mirna > corr_low_mirna else 'negative'
-            
-            return {
-                'interaction_type': 'lncrna_mirna',
-                'target': gene_name,
-                'regulator1': lncrna_name,
-                'regulator2': mirna_name,
-                'r2_regulator1_only': r2_1,
-                'r2_regulator1_regulator2': r2_2,
-                'r2_with_interaction': r2_3,
-                'improvement_from_interaction': improvement_from_interaction,
-                'context_dependent': context_dependent,
-                'corr_high_regulator2': corr_high_mirna,
-                'corr_low_regulator2': corr_low_mirna,
-                'context_strength': context_strength,
-                'context_direction': context_direction,
-                'interaction_p_value': p_value
-            }
-            
-        except Exception as e:
-            print(f"    ⚠️  Error analyzing {gene_name}-{lncrna_name}-{mirna_name}: {e}")
-            return None
+                    corr, _ = pearsonr(x, y_perm)
+                    if abs(corr) >= observed_abs - 1e-12:
+                        extreme += 1
+                except Exception:
+                    pass
+            n += to_run
+            if n >= min_perms:
+                # +1 smoothing (conservative)
+                p_hat = (extreme + 1) / (n + 1)
+                # Early stop if clearly > alpha
+                if p_hat > alpha * 2:  # heuristic margin
+                    return p_hat
+        return (extreme + 1) / (n + 1)
+
             
     def parallel_analyze_multi_way_interactions(self):
+        """Parallel multi-way regulator interaction analysis."""
         print("  🔄 Parallel processing multi-way regulatory interactions...")
         if self.CONFIG[self.mode]['multi_way_gene_limit'] is None:
-            sampled_genes = self.datasets['gene'].index
+            sampled_genes = self.datasets['gene'].index.to_list()
         else:
             limit = min(self.CONFIG[self.mode]['multi_way_gene_limit'], len(self.datasets['gene']))
             sampled_genes = np.random.choice(self.datasets['gene'].index, limit, replace=False)
+        sampled_genes = list(sampled_genes)
         n_genes = len(sampled_genes)
-        gene_chunks = np.array_split(sampled_genes, min(self.n_jobs, n_genes))
-        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} chunks (mode={self.mode})")
-        all_results = []
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
-            futures = {ex.submit(self._process_multi_way_chunk, chunk): i for i, chunk in enumerate(gene_chunks)}
+        if n_genes == 0:
+            return pd.DataFrame()
+        n_chunks = max(1, min(self.n_jobs * self.chunk_multiplier, n_genes))
+        gene_chunks = [chunk for chunk in np.array_split(sampled_genes, n_chunks) if len(chunk) > 0]
+        print(f"  📊 Processing {n_genes} genes in {len(gene_chunks)} chunks (mode={self.mode}, mult={self.chunk_multiplier})")
+        all_results: List[Dict] = []
+        with ProcessPoolExecutor(max_workers=self.n_jobs) as pool:
+            futures = {pool.submit(self._process_multi_way_chunk, list(chunk)): i for i, chunk in enumerate(gene_chunks)}
             for fut in as_completed(futures):
                 idx = futures[fut]
                 try:
@@ -683,11 +598,11 @@ class OptimizedContextDependentRegulationAnalysis:
                     print(f"    ✅ Chunk {idx+1}/{len(gene_chunks)}: {len(res)} results")
                 except Exception as e:
                     print(f"    ❌ Chunk {idx+1} failed: {e}")
-        if all_results:
-            df = pd.DataFrame(all_results)
-            print(f"  🎯 Total multi-way interactions: {len(df)}")
-            return df
-        return pd.DataFrame()
+        if not all_results:
+            return pd.DataFrame()
+        df = pd.DataFrame(all_results)
+        print(f"  🎯 Total multi-way interactions: {len(df)}")
+        return df
 
     def _process_multi_way_chunk(self, gene_chunk: List[str]) -> List[Dict]:
         """Process a chunk of genes for multi-way interaction analysis."""
@@ -712,21 +627,44 @@ class OptimizedContextDependentRegulationAnalysis:
     def _get_top_regulators_vectorized(self, gene: str) -> Dict[str, np.ndarray]:
         cfg = self.CONFIG[self.mode]['multi_way_regulators']
         regulators: Dict[str, np.ndarray] = {}
+        
+        # Use pre-computed gene array if available
+        if gene in self.gene_index:
+            gene_idx = self.gene_index[gene]
+            gene_expression = self.gene_array[gene_idx].astype(np.float32)
+        else:
+            gene_expression = self.datasets['gene'].loc[gene].values.astype(np.float32)
+        
+        # Get top correlations for each regulator type
         mirna_corrs = self._get_top_correlations_vectorized(
-            self.datasets['gene'].loc[gene].values, self.datasets['mirna'], 'mirna', top_n=cfg['miRNA']
+            gene_expression, self.datasets['mirna'], 'mirna', top_n=cfg['miRNA']
         )
         for name, _, _ in mirna_corrs:
-            regulators[name] = self.datasets['mirna'].loc[name.replace('mirna_', '')].values
+            clean_name = name.replace('mirna_', '')
+            if clean_name in self.mirna_index:
+                mirna_idx = self.mirna_index[clean_name]
+                regulators[name] = self.mirna_array[mirna_idx].astype(np.float32)
+            else:
+                regulators[name] = self.datasets['mirna'].loc[clean_name].values.astype(np.float32)
+        
         lncrna_corrs = self._get_top_correlations_vectorized(
-            self.datasets['gene'].loc[gene].values, self.datasets['lncrna'], 'lncrna', top_n=cfg['lncRNA']
+            gene_expression, self.datasets['lncrna'], 'lncrna', top_n=cfg['lncRNA']
         )
         for name, _, _ in lncrna_corrs:
-            regulators[name] = self.datasets['lncrna'].loc[name.replace('lncrna_', '')].values
+            clean_name = name.replace('lncrna_', '')
+            regulators[name] = self.datasets['lncrna'].loc[clean_name].values.astype(np.float32)
+        
         meth_corrs = self._get_top_correlations_vectorized(
-            self.datasets['gene'].loc[gene].values, self.datasets['methylation'], 'methylation', top_n=cfg['methylation']
+            gene_expression, self.datasets['methylation'], 'methylation', top_n=cfg['methylation']
         )
         for name, _, _ in meth_corrs:
-            regulators[name] = self.datasets['methylation'].loc[name.replace('methylation_', '')].values
+            clean_name = name.replace('methylation_', '')
+            if clean_name in self.methylation_index:
+                meth_idx = self.methylation_index[clean_name]
+                regulators[name] = self.methylation_array[meth_idx].astype(np.float32)
+            else:
+                regulators[name] = self.datasets['methylation'].loc[clean_name].values.astype(np.float32)
+        
         return regulators
 
     def _analyze_multi_regulator_interaction(self, gene_expression: np.ndarray, regulators: Dict[str, np.ndarray], 
@@ -807,135 +745,18 @@ class OptimizedContextDependentRegulationAnalysis:
             print(f"    ⚠️  Error analyzing multi-regulator interaction for {gene_name}: {e}")
             return None
             
-    def optimized_infer_context_specific_networks(self):
-        print("  🔄 Inferring context-specific regulatory networks (single-pool parallelization)...")
-        # Avoid nested ProcessPoolExecutors (previous version spawned a pool per context inside another pool),
-        # which can cause oversubscription / coordinator overhead on macOS (spawn) and reduce effective CPU usage.
-        context_networks = {}
-        contexts_to_analyze = [
-            ('high_mirna', 0.5),
-            ('low_mirna', -0.5),
-            ('high_methylation', 0.5)
-        ]
-        for context_name, threshold in contexts_to_analyze:
-            try:
-                context_networks[context_name] = self._analyze_context_network_parallel(context_name, threshold)
-                print(f"    ✅ {context_name} context analysis completed")
-            except Exception as e:  # pragma: no cover
-                print(f"    ❌ {context_name} context analysis failed: {e}")
-                context_networks[context_name] = {k: [] for k in ['gene_mirna_correlations','gene_lncrna_correlations','gene_methylation_correlations']}
-        return context_networks
-        
-    def _analyze_context_network_parallel(self, context_name: str, threshold: float) -> Dict:
-        """Analyze a single context's regulatory networks in parallel over gene chunks.
-
-        Parameters
-        ----------
-        context_name : str
-            Name of the context (e.g., 'high_mirna').
-        threshold : float
-            Z-score threshold used to select samples belonging to the context.
-        """
-        # NOTE: This function itself launches a ProcessPoolExecutor over gene chunks.
-        # It should only be called from a non-process-pool context to avoid nesting.
-        print(f"    🔄 Processing {context_name} context with {self.n_jobs} workers (single level pool)...")
-        context_networks = {k: [] for k in ['gene_mirna_correlations','gene_lncrna_correlations','gene_methylation_correlations']}
-        # Gene sampling
-        if self.CONFIG[self.mode]['context_network_gene_limit'] is None:
-            sampled_genes = self.datasets['gene'].index
-        else:
-            limit = min(self.CONFIG[self.mode]['context_network_gene_limit'], len(self.datasets['gene']))
-            sampled_genes = np.random.choice(self.datasets['gene'].index, limit, replace=False)
-        # Context mask
-        if 'high_mirna' in context_name or 'low_mirna' in context_name:
-            sentinel = self.datasets['mirna'].index[0]
-            vals = self.datasets['mirna'].loc[sentinel].values
-            z = StandardScaler().fit_transform(vals.reshape(-1,1)).ravel()
-            # Correct logic: for low_mirna with threshold -0.5 we want z < -0.5 (not z < 0.5)
-            if threshold > 0:  # high_mirna
-                context_mask = z > threshold
-            else:  # low_mirna (threshold negative)
-                context_mask = z < threshold
-        elif 'high_methylation' in context_name:
-            sentinel = self.datasets['methylation'].index[0]
-            vals = self.datasets['methylation'].loc[sentinel].values
-            z = StandardScaler().fit_transform(vals.reshape(-1,1)).ravel()
-            context_mask = z > threshold
-        else:
-            context_mask = np.ones(len(self.samples), dtype=bool)
-        context_samples = [col for i, col in enumerate(self.datasets['gene'].columns) if context_mask[i]]
-        print(f"      • {context_name} selected {len(context_samples)} samples (threshold={threshold})")
-        if len(context_samples) < 10:
-            return context_networks
-        gene_chunks = np.array_split(sampled_genes, min(self.n_jobs, len(sampled_genes)))
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
-            futures = {ex.submit(self._process_context_network_chunk, chunk, context_samples, context_name): i for i, chunk in enumerate(gene_chunks)}
-            for fut in as_completed(futures):
-                idx = futures[fut]
-                try:
-                    chunk_results = fut.result()
-                    for k in context_networks:
-                        context_networks[k].extend(chunk_results[k])
-                    print(f"      ✅ Context chunk {idx+1}/{len(gene_chunks)} completed")
-                except Exception as e:
-                    print(f"      ❌ Context chunk {idx+1} failed: {e}")
-        return context_networks
-        
-    def _process_context_network_chunk(self, gene_chunk: List[str], context_samples: List[str], context_name: str) -> Dict:
-        """Process a chunk of genes for context network analysis."""
-        chunk_results = {
-            'gene_mirna_correlations': [],
-            'gene_lncrna_correlations': [],
-            'gene_methylation_correlations': []
-        }
-        
-        for gene in gene_chunk:
-            gene_expression = self.datasets['gene'].loc[gene, context_samples].values
-            
-            # miRNA correlations in context (vectorized)
-            for mirna in self.datasets['mirna'].index:
-                mirna_expression = self.datasets['mirna'].loc[mirna, context_samples].values
-                if len(mirna_expression) > 5:
-                    corr, pval = pearsonr(gene_expression, mirna_expression)
-                    if pval < 0.1:
-                        chunk_results['gene_mirna_correlations'].append({
-                            'gene': gene, 'mirna': mirna, 'correlation': corr, 'p_value': pval
-                        })
-            
-            # lncRNA correlations in context (vectorized)
-            for lncrna in self.datasets['lncrna'].index:
-                lncrna_expression = self.datasets['lncrna'].loc[lncrna, context_samples].values
-                if len(lncrna_expression) > 5:
-                    corr, pval = pearsonr(gene_expression, lncrna_expression)
-                    if pval < 0.1:
-                        chunk_results['gene_lncrna_correlations'].append({
-                            'gene': gene, 'lncrna': lncrna, 'correlation': corr, 'p_value': pval
-                        })
-            
-            # Methylation correlations in context (vectorized)
-            for cpg in self.datasets['methylation'].index:
-                meth_expression = self.datasets['methylation'].loc[cpg, context_samples].values
-                if len(meth_expression) > 5:
-                    corr, pval = pearsonr(gene_expression, meth_expression)
-                    if pval < 0.1:
-                        chunk_results['gene_methylation_correlations'].append({
-                            'gene': gene, 'cpg': cpg, 'correlation': corr, 'p_value': pval
-                        })
-        
-        return chunk_results
+    # Context-specific network analysis removed per scope reduction.
         
     def generate_context_visualizations(self):
         print("\n" + "="*60)
         print("GENERATING CONTEXT-DEPENDENT VISUALIZATIONS")
         print("="*60)
-        with ThreadPoolExecutor(max_workers=3) as ex:
+        with ThreadPoolExecutor(max_workers=2) as ex:
             futures = [
                 ex.submit(self.plot_context_dependent_interactions),
-                ex.submit(self.plot_context_networks),
                 ex.submit(self.plot_interaction_improvements)
             ]
-            for fut in futures:
-                fut.result()
+            for fut in futures: fut.result()
         print(f"✅ All visualizations saved to {self.plots_dir}/")
         
     def plot_context_dependent_interactions(self):
@@ -943,53 +764,30 @@ class OptimizedContextDependentRegulationAnalysis:
             if 'context_dependent' not in self.results:
                 print("    ⚠️  No context-dependent results available for plotting")
                 return
-            fig, axes = plt.subplots(2,2, figsize=(15,12))
+            fig, axes = plt.subplots(1,2, figsize=(15,6))
             meth_mirna = self.results['context_dependent'].get('methylation_mirna_context', pd.DataFrame())
-            lncrna_mirna = self.results['context_dependent'].get('lncrna_mirna_context', pd.DataFrame())
             if not meth_mirna.empty:
                 try:
-                    axes[0,0].hist(meth_mirna['improvement_from_interaction'].dropna(), bins=30, alpha=0.7, edgecolor='black')
-                    axes[0,0].set_title('Methylation-miRNA Context Interactions')
-                    axes[0,0].set_xlabel('Improvement from Interaction')
-                    axes[0,0].set_ylabel('Frequency')
-                    axes[0,0].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Threshold')
-                    axes[0,0].legend()
+                    axes[0].hist(meth_mirna['improvement_from_interaction'].dropna(), bins=30, alpha=0.7, edgecolor='black')
+                    axes[0].set_title('Methylation-miRNA Interaction Improvement')
+                    axes[0].set_xlabel('Improvement from Interaction')
+                    axes[0].set_ylabel('Frequency')
+                    axes[0].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Threshold')
+                    axes[0].legend()
                 except Exception as e:
                     print(f"    ⚠️  Error plotting methylation-miRNA: {e}")
-                    axes[0,0].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[0,0].transAxes)
-            if not lncrna_mirna.empty:
-                try:
-                    axes[0,1].hist(lncrna_mirna['improvement_from_interaction'].dropna(), bins=30, alpha=0.7, edgecolor='black')
-                    axes[0,1].set_title('lncRNA-miRNA Context Interactions')
-                    axes[0,1].set_xlabel('Improvement from Interaction')
-                    axes[0,1].set_ylabel('Frequency')
-                    axes[0,1].axvline(x=0.1, color='red', linestyle='--', alpha=0.7, label='Threshold')
-                    axes[0,1].legend()
-                except Exception as e:
-                    print(f"    ⚠️  Error plotting lncRNA-miRNA: {e}")
-                    axes[0,1].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[0,1].transAxes)
+                    axes[0].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[0].transAxes)
             if not meth_mirna.empty:
                 try:
                     strength = meth_mirna['context_strength'].dropna()
                     if len(strength) > 0:
-                        axes[1,0].hist(strength, bins=30, alpha=0.7, edgecolor='black')
+                        axes[1].hist(strength, bins=30, alpha=0.7, edgecolor='black')
                     else:
-                        axes[1,0].text(0.5,0.5,'No Data', ha='center', va='center', transform=axes[1,0].transAxes)
-                    axes[1,0].set_title('Methylation-miRNA Context Strength')
+                        axes[1].text(0.5,0.5,'No Data', ha='center', va='center', transform=axes[1].transAxes)
+                    axes[1].set_title('Methylation-miRNA Context Strength')
                 except Exception as e:
                     print(f"    ⚠️  Error plotting methylation strength: {e}")
-                    axes[1,0].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[1,0].transAxes)
-            if not lncrna_mirna.empty:
-                try:
-                    strength = lncrna_mirna['context_strength'].dropna()
-                    if len(strength) > 0:
-                        axes[1,1].hist(strength, bins=30, alpha=0.7, edgecolor='black')
-                    else:
-                        axes[1,1].text(0.5,0.5,'No Data', ha='center', va='center', transform=axes[1,1].transAxes)
-                    axes[1,1].set_title('lncRNA-miRNA Context Strength')
-                except Exception as e:
-                    print(f"    ⚠️  Error plotting lncRNA strength: {e}")
-                    axes[1,1].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[1,1].transAxes)
+                    axes[1].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[1].transAxes)
             plt.tight_layout()
             try:
                 path = os.path.join(self.plots_dir, "context_dependent_interactions.png")
@@ -1006,78 +804,32 @@ class OptimizedContextDependentRegulationAnalysis:
             except:  # noqa
                 pass
         
-    def plot_context_networks(self):
-        try:
-            if 'context_dependent' not in self.results:
-                print("    ⚠️  No context-dependent results available for plotting")
-                return
-            context_networks = self.results['context_dependent'].get('context_networks', {})
-            if not context_networks:
-                print("    ⚠️  No context networks available for plotting")
-                return
-            fig, axes = plt.subplots(2,2, figsize=(15,12))
-            contexts = list(context_networks.keys())
-            for i, context in enumerate(contexts[:4]):
-                try:
-                    network = context_networks.get(context, {})
-                    mirna_count = len(network.get('gene_mirna_correlations', []))
-                    lncrna_count = len(network.get('gene_lncrna_correlations', []))
-                    meth_count = len(network.get('gene_methylation_correlations', []))
-                    categories = ['miRNA','lncRNA','Methylation']
-                    counts = [mirna_count, lncrna_count, meth_count]
-                    axes[i//2, i%2].bar(categories, counts, alpha=0.7, color=['blue','green','red'])
-                    axes[i//2, i%2].set_title(f'{context.replace("_"," ").title()} Network')
-                    axes[i//2, i%2].set_ylabel('Number of Regulatory Relationships')
-                    for j,c in enumerate(counts):
-                        axes[i//2, i%2].text(j, c+1, str(c), ha='center', va='bottom', fontweight='bold')
-                except Exception as e:
-                    print(f"    ⚠️  Error plotting {context} network: {e}")
-                    axes[i//2, i%2].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[i//2, i%2].transAxes)
-            plt.tight_layout()
-            try:
-                path = os.path.join(self.plots_dir, "context_networks.png")
-                plt.savefig(path, dpi=300, bbox_inches='tight')
-                print(f"    ✅ Saved context networks plot: {path}")
-            except Exception as e:
-                print(f"    ❌ Error saving plot: {e}")
-            finally:
-                plt.close()
-        except Exception as e:
-            print(f"    ❌ Error in plot_context_networks: {e}")
-            try:
-                plt.close('all')
-            except:  # noqa
-                pass
         
     def plot_interaction_improvements(self):
         try:
             if 'context_dependent' not in self.results:
                 print("    ⚠️  No context-dependent results available for plotting")
                 return
-            fig, axes = plt.subplots(1,2, figsize=(15,6))
+            fig, axes = plt.subplots(1,2, figsize=(12,5))
             meth_mirna = self.results['context_dependent'].get('methylation_mirna_context', pd.DataFrame())
-            lncrna_mirna = self.results['context_dependent'].get('lncrna_mirna_context', pd.DataFrame())
-            if not meth_mirna.empty and not lncrna_mirna.empty:
+            if meth_mirna.empty:
+                for ax, title in zip(axes, ['Interaction Improvement','Context Strength']):
+                    ax.text(0.5,0.5,'No Data', ha='center', va='center', transform=ax.transAxes)
+                    ax.set_title(title)
+            else:
                 try:
-                    data1 = [meth_mirna['improvement_from_interaction'].dropna(), lncrna_mirna['improvement_from_interaction'].dropna()]
-                    axes[0].boxplot(data1, labels=['Methylation-miRNA','lncRNA-miRNA'])
-                    axes[0].set_title('Interaction Improvement Comparison')
-                    axes[0].set_ylabel('Improvement from Interaction')
+                    axes[0].boxplot([meth_mirna['improvement_from_interaction'].dropna()], labels=['Methylation-miRNA'])
+                    axes[0].set_title('Interaction Improvement')
+                    axes[0].set_ylabel('ΔR² (Interaction)')
                     axes[0].grid(True, alpha=0.3)
-                    data2 = [meth_mirna['context_strength'].dropna(), lncrna_mirna['context_strength'].dropna()]
-                    axes[1].boxplot(data2, labels=['Methylation-miRNA','lncRNA-miRNA'])
-                    axes[1].set_title('Context Strength Comparison')
-                    axes[1].set_ylabel('Context Strength')
+                    axes[1].boxplot([meth_mirna['context_strength'].dropna()], labels=['Methylation-miRNA'])
+                    axes[1].set_title('Context Strength')
+                    axes[1].set_ylabel('|Corr High - Corr Low|')
                     axes[1].grid(True, alpha=0.3)
                 except Exception as e:
                     print(f"    ⚠️  Error plotting improvements: {e}")
-                    axes[0].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[0].transAxes)
-                    axes[1].text(0.5,0.5,'Plot Error', ha='center', va='center', transform=axes[1].transAxes)
-            else:
-                axes[0].text(0.5,0.5,'No Data', ha='center', va='center', transform=axes[0].transAxes)
-                axes[1].text(0.5,0.5,'No Data', ha='center', va='center', transform=axes[1].transAxes)
-                axes[0].set_title('Interaction Improvement Comparison')
-                axes[1].set_title('Context Strength Comparison')
+                    for ax in axes:
+                        ax.text(0.5,0.5,'Plot Error', ha='center', va='center', transform=ax.transAxes)
             plt.tight_layout()
             try:
                 path = os.path.join(self.plots_dir, "interaction_improvements.png")
@@ -1185,28 +937,7 @@ class OptimizedContextDependentRegulationAnalysis:
                     f.write("### Methylation-miRNA Context Analysis\n\n")
                     f.write("⚠️ **No methylation-miRNA interactions found.**\n\n")
                 
-                # lncRNA-miRNA context
-                lncrna_mirna = self.results['context_dependent'].get('lncrna_mirna_context', pd.DataFrame())
-                if not lncrna_mirna.empty:
-                    f.write("### lncRNA-miRNA Context Analysis\n\n")
-                    f.write(f"- **Total interactions analyzed:** {len(lncrna_mirna)}\n")
-                    f.write(f"- **Context-dependent interactions:** {lncrna_mirna['context_dependent'].sum()}\n")
-                    f.write(f"- **Mean improvement from interaction:** {lncrna_mirna['improvement_from_interaction'].mean():.3f}\n")
-                    f.write(f"- **Mean context strength:** {lncrna_mirna['context_strength'].mean():.3f}\n\n")
-                    
-                    # Top interactions table
-                    if len(lncrna_mirna) > 0:
-                        f.write("#### Top 10 lncRNA-miRNA Interactions\n\n")
-                        f.write("*This table identifies genes whose lncRNA-mediated regulation varies depending on miRNA expression, revealing competitive endogenous RNA (ceRNA) network dynamics.*\n\n")
-                        top_interactions = lncrna_mirna.nlargest(10, 'improvement_from_interaction')
-                        f.write("| Rank | Gene | lncRNA | miRNA | Improvement | Context Strength |\n")
-                        f.write("|------|------|--------|-------|-------------|------------------|\n")
-                        for i, (_, row) in enumerate(top_interactions.iterrows(), 1):
-                            f.write(f"| {i} | {row.get('target', 'N/A')} | {row.get('regulator1', 'N/A')} | {row.get('regulator2', 'N/A')} | {row.get('improvement_from_interaction', 0):.3f} | {row.get('context_strength', 0):.3f} |\n")
-                        f.write("\n")
-                else:
-                    f.write("### lncRNA-miRNA Context Analysis\n\n")
-                    f.write("⚠️ **No lncRNA-miRNA interactions found.**\n\n")
+                # lncRNA-miRNA context section removed
                 
                 # Multi-way interactions
                 multi_way = self.results['context_dependent'].get('multi_way_interactions', pd.DataFrame())
@@ -1470,34 +1201,14 @@ class OptimizedContextDependentRegulationAnalysis:
             print(f"  Mean improvement from interaction: {meth_mirna['improvement_from_interaction'].mean():.3f}")
             print(f"  Mean context strength: {meth_mirna['context_strength'].mean():.3f}")
         
-        # Summary of lncRNA-miRNA context
-        lncrna_mirna = self.results['context_dependent']['lncrna_mirna_context']
-        if not lncrna_mirna.empty:
-            print(f"\nLNCRNA-MIRNA CONTEXT ANALYSIS:")
-            print(f"  Total interactions analyzed: {len(lncrna_mirna)}")
-            print(f"  Context-dependent interactions: {lncrna_mirna['context_dependent'].sum()}")
-            print(f"  Mean improvement from interaction: {lncrna_mirna['improvement_from_interaction'].mean():.3f}")
-            print(f"  Mean context strength: {lncrna_mirna['context_strength'].mean():.3f}")
-        
-        # Summary of multi-way interactions
+    # Summary of multi-way interactions
         multi_way = self.results['context_dependent']['multi_way_interactions']
         if not multi_way.empty:
             print(f"\nMULTI-WAY INTERACTION ANALYSIS:")
             print(f"  Total genes analyzed: {len(multi_way)}")
             print(f"  Genes with significant interactions: {multi_way['has_significant_interactions'].sum()}")
             print(f"  Mean improvement from interactions: {multi_way['improvement_from_regulators'].mean():.3f}")
-        
-        # Summary of context networks
-        context_networks = self.results['context_dependent']['context_networks']
-        if context_networks:
-            print(f"\nCONTEXT-SPECIFIC NETWORKS:")
-            for context_name, network in context_networks.items():
-                total_relationships = (
-                    len(network.get('gene_mirna_correlations', [])) +
-                    len(network.get('gene_lncrna_correlations', [])) +
-                    len(network.get('gene_methylation_correlations', []))
-                )
-                print(f"  {context_name}: {total_relationships} regulatory relationships")
+    # lncRNA-miRNA and context-specific network summaries removed
     
     def run_complete_context_analysis(self):
         """Run the complete optimized context-dependent analysis (mode-aware)."""
@@ -1536,6 +1247,8 @@ class OptimizedContextDependentRegulationAnalysis:
         print("\n" + "="*80)
         print("🎉 OPTIMIZED CONTEXT-DEPENDENT ANALYSIS COMPLETED SUCCESSFULLY!")
         print("="*80)
+        # Gracefully shutdown shared pool
+    # No persistent pool to shutdown
 
 def main(mode: str = None):
     """Main entry point with optional mode parameter and CLI prompt."""
