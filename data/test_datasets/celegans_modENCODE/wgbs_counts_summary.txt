@@ -1,0 +1,7 @@
+Dataset: wgbs_counts
+Features: 50
+Samples: 8
+Sample IDs: L1-TP1, L1-TP2, L2-TP1, L2-TP2, L3-TP1, L3-TP2, L4-TP1, L4-TP2
+Total non-zero values: 400
+Mean expression per feature: 37.03
+Std expression per feature: 6.37
