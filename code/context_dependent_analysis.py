@@ -76,7 +76,18 @@ class OptimizedContextDependentRegulationAnalysis:
         self.data_dir = os.path.join(self.workspace_root, data_dir)
         self.datasets: Dict[str, pd.DataFrame] = {}
         self.results: Dict[str, Any] = {}
-        self.n_jobs = min(48, mp.cpu_count()) if n_jobs is None else n_jobs
+        # Determine parallel worker count: use provided n_jobs, else all available cores,
+        # optionally capped by environment variable CONTRA_MAX_CORES.
+        if n_jobs is not None:
+            self.n_jobs = n_jobs
+        else:
+            max_env = os.environ.get('CONTRA_MAX_CORES')
+            try:
+                max_env_val = int(max_env) if max_env else None
+            except ValueError:
+                max_env_val = None
+            cpu_total = mp.cpu_count()
+            self.n_jobs = min(cpu_total, max_env_val) if max_env_val else cpu_total
         self.seed = self.CONFIG[self.mode]['seed']
         if self.seed is not None:
             np.random.seed(self.seed)

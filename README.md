@@ -17,7 +17,7 @@ networks.
 
 - **Multi-omics Integration**: Gene, lncRNA, miRNA, and DNA methylation
 - **Dual Analysis Modes**: Single unified script supports `full` and `subset` modes
-- **High-Performance Computing**: Parallel processing across available CPU cores
+- **High-Performance Computing**: Parallel processing across all detected CPU cores (override with `--n-jobs` or `CONTRA_MAX_CORES`)
 - **Context-Dependent Analysis**: Interaction + conditional + multi-way modeling
 - **Advanced Statistical Methods**:
     - Interaction term regression & F‑tests
@@ -82,6 +82,28 @@ Arguments:
 
 - `--mode {full,subset}` Select analysis breadth
 - `--n-jobs N` Override auto CPU core detection
+
+#### Parallelism / CPU Control
+
+By default the pipeline uses all available CPU cores reported by Python.
+
+Ways to control cores:
+
+| Method | Example | Notes |
+|--------|---------|-------|
+| Command-line flag | `--n-jobs 32` | Explicitly sets worker count |
+| Environment variable | `CONTRA_MAX_CORES=64` | Upper cap when `--n-jobs` not provided |
+| Both provided | `CONTRA_MAX_CORES=64 --n-jobs 80` | Flag wins (uses 80 if system has ≥80 cores) |
+
+Examples:
+
+```bash
+# Cap to 64 cores via environment variable
+CONTRA_MAX_CORES=64 python3 code/context_dependent_analysis.py --mode full
+
+# Explicitly use 32 cores (ignores CONTRA_MAX_CORES)
+python3 code/context_dependent_analysis.py --mode subset --n-jobs 32
+```
 
 Outputs (per run) are written to:
 
