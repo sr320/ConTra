@@ -66,7 +66,7 @@ class OptimizedContextDependentRegulationAnalysis:
         }
     }
 
-    def __init__(self, data_dir="data/cleaned_datasets", n_jobs=None, mode: str = 'full'):
+    def __init__(self, data_dir="data/cleaned_datasets", n_jobs=None, mode: str = 'full', output_root: str = 'output'):
         mode = (mode or 'full').lower()
         if mode not in self.CONFIG:
             raise ValueError("mode must be 'full' or 'subset'")
@@ -92,9 +92,11 @@ class OptimizedContextDependentRegulationAnalysis:
         if self.seed is not None:
             np.random.seed(self.seed)
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Base output root (under repo root). Allow override but always anchor to workspace_root.
+        self.base_output_root = os.path.join(self.workspace_root, output_root.rstrip('/'))
         self.output_dir = os.path.join(
-            self.workspace_root,
-            f"output/context_dependent_analysis_{self.mode}_{self.timestamp}"
+            self.base_output_root,
+            f"context_dependent_analysis_{self.mode}_{self.timestamp}"
         )
         for d in [self.output_dir]:
             os.makedirs(d, exist_ok=True)
@@ -1437,18 +1439,21 @@ def main(mode: str = None):
         parser = argparse.ArgumentParser(description="Unified context-dependent regulation analysis")
         parser.add_argument('--mode', choices=['full','subset'], help="Run mode: full or subset", default=None)
         parser.add_argument('--n-jobs', type=int, default=None, help="Number of parallel workers")
+        parser.add_argument('--output-root', type=str, default='output', help="Base output directory relative to repo root (default: output)")
         args = parser.parse_args()
         mode = args.mode
         n_jobs = args.n_jobs
+        output_root = args.output_root
     else:
         n_jobs = None
+        output_root = 'output'
     if mode is None:
         try:
             user_input = input("Run mode? (full/subset) [full]: ").strip().lower()
             mode = user_input if user_input in ('full','subset') else 'full'
         except EOFError:
             mode = 'full'
-    analysis = OptimizedContextDependentRegulationAnalysis(mode=mode, n_jobs=n_jobs)
+    analysis = OptimizedContextDependentRegulationAnalysis(mode=mode, n_jobs=n_jobs, output_root=output_root)
     analysis.run_complete_context_analysis()
 
 if __name__ == "__main__":
