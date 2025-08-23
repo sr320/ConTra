@@ -15,53 +15,105 @@ networks.
 
 ## 🚀 Features
 
--   **Multi-omics Integration**: Analyzes gene expression, lncRNA,
-    miRNA, and DNA methylation data
--   **High-Performance Computing**: Parallel processing across 48+ CPU
-    cores with optimized memory usage
--   **Context-Dependent Analysis**: Identifies regulatory interactions
-    that vary across different biological contexts
--   **Advanced Statistical Methods**:
-    -   Interaction term analysis
-    -   Conditional correlation analysis
-    -   Multi-variable regression with interaction terms
-    -   Context-specific regulatory network inference
--   **Memory Optimization**: Efficient batch processing using up to
-    247GB RAM
--   **Comprehensive Output**: Generates plots, tables, and detailed
-    reports
+- **Multi-omics Integration**: Gene, lncRNA, miRNA, and DNA methylation
+- **Dual Analysis Modes**: Single unified script supports `full` and `subset` modes
+- **High-Performance Computing**: Parallel processing across available CPU cores
+- **Context-Dependent Analysis**: Interaction + conditional + multi-way modeling
+- **Advanced Statistical Methods**:
+    - Interaction term regression & F‑tests
+    - Vectorized correlation screening
+    - Multi-way regulator synergy scoring
+    - Context-specific network inference
+- **Robust Output Suite**: Publication-ready plots, CSV tables, Markdown + HTML reports
+- **Reproducible Subset Mode**: Fixed random seed for quick iteration
+- **Memory Efficiency**: Chunked / vectorized operations
 
 ## 📋 Requirements
 
--   Python 3.8+
--   8GB+ RAM (recommended: 16GB+)
--   Multi-core CPU (recommended: 8+ cores)
+- Python 3.8+
+- 8GB+ RAM (recommended: 16GB+)
+- Multi-core CPU (recommended: 8+ cores)
 
 ## 🛠️ Installation
 
-1.  Clone the repository:
+1. Clone the repository:
 
-``` bash
+```bash
 git clone https://github.com/sr320/ConTra.git
 cd ConTra
 ```
 
-2.  Install dependencies:
+2. Install dependencies:
 
-``` bash
+```bash
 pip install -r code/requirements.txt
 ```
 
-or 
+or
 
-``` bash
+```bash
 python3 -m pip install -r code/requirements.txt
 ```
 
 
 ## 📊 Usage
 
-### Data Format
+### 1. Quick Start
+
+Run (interactive prompt will ask for mode, default = full):
+
+```bash
+python3 code/context_dependent_analysis.py
+```
+
+Run explicitly in subset (faster dev/test) mode using 8 workers:
+
+```bash
+python3 code/context_dependent_analysis.py --mode subset --n-jobs 8
+```
+
+Run full analysis using all detected cores:
+
+```bash
+python3 code/context_dependent_analysis.py --mode full
+```
+
+Arguments:
+
+- `--mode {full,subset}` Select analysis breadth
+- `--n-jobs N` Override auto CPU core detection
+
+Outputs (per run) are written to:
+
+```text
+output/context_dependent_analysis_<mode>_<YYYYMMDD_HHMMSS>/
+    plots/   *.png
+    tables/  *.csv
+    reports/ *.md, *.html
+```
+
+Key tables:
+
+- `methylation_mirna_context.csv`
+- `lncrna_mirna_context.csv`
+- `multi_way_interactions.csv`
+- `*gene_*_correlations.csv` (context-specific networks)
+
+Reports:
+
+- Markdown: `context_dependent_analysis_report.md` (full) or `subset_context_dependent_analysis_report.md`
+- HTML copy with embedded images
+
+### 2. Analysis Modes
+
+| Mode | Genes (pairwise) | Genes (multi-way) | Genes (networks) | miRNA top/use | Methylation top/use | lncRNA top/use | Multi-way regulators (miRNA / lncRNA / methylation) | Seed |
+|------|------------------|-------------------|------------------|---------------|---------------------|----------------|------------------------------------------------------|------|
+| full   | all | all | all | 25 / 10 | 50 / 15 | 50 / 15 | 15 / 30 / 25 | none |
+| subset | 500 | 200 | 200 | 10 / 5  | 10 / 5  | 10 / 5  | 5 / 7 / 5    | 42   |
+
+Subset mode greatly reduces runtime and file sizes while preserving pipeline logic (useful for method development / CI tests).
+
+### 3. Data Format
 
 The repository provides pre-cleaned and standardized multi-omics
 datasets ready for immediate analysis. All datasets are in CSV format
@@ -81,33 +133,29 @@ with consistent sample alignment:
 All datasets contain the same **40 samples** representing different time
 points (TP1-TP4) across **10 different conditions**:
 
--   **ACR-139**: TP1, TP2, TP3, TP4
--   **ACR-145**: TP1, TP2, TP3, TP4\
--   **ACR-150**: TP1, TP2, TP3, TP4
--   **ACR-173**: TP1, TP2, TP3, TP4
--   **ACR-186**: TP1, TP2, TP3, TP4
--   **ACR-225**: TP1, TP2, TP3, TP4
--   **ACR-229**: TP1, TP2, TP3, TP4
--   **ACR-237**: TP1, TP2, TP3, TP4
--   **ACR-244**: TP1, TP2, TP3, TP4
--   **ACR-265**: TP1, TP2, TP3, TP4
+- **ACR-139**: TP1, TP2, TP3, TP4
+- **ACR-145**: TP1, TP2, TP3, TP4
+- **ACR-150**: TP1, TP2, TP3, TP4
+- **ACR-173**: TP1, TP2, TP3, TP4
+- **ACR-186**: TP1, TP2, TP3, TP4
+- **ACR-225**: TP1, TP2, TP3, TP4
+- **ACR-229**: TP1, TP2, TP3, TP4
+- **ACR-237**: TP1, TP2, TP3, TP4
+- **ACR-244**: TP1, TP2, TP3, TP4
+- **ACR-265**: TP1, TP2, TP3, TP4
 
 #### **Data Quality Features**
 
--   **Common sample IDs**: All datasets use identical 40 sample
-    identifiers
--   **No zero expression**: Features with zero expression across all
-    samples removed
--   **Sufficient variation**: Features with limited variation (CV \<
-    0.1) filtered out
--   **Consistent structure**: Same column order and sample alignment
-    across all datasets
--   **No missing values**: Complete data matrices ready for analysis
+- **Common sample IDs**: All datasets use identical 40 sample identifiers
+- **No zero expression**: Features with zero expression across all samples removed
+- **Sufficient variation**: Features with limited variation (CV < 0.1) filtered out
+- **Consistent structure**: Same column order and sample alignment across all datasets
+- **No missing values**: Complete data matrices ready for analysis
 
 
 #### **File Organization**
 
-```         
+```text
 data/cleaned_datasets/
 ├── gene_counts_cleaned.csv      # Main gene expression dataset
 ├── lncrna_counts_cleaned.csv    # Main lncRNA expression dataset
@@ -130,41 +178,26 @@ and machine learning workflows
 ConTra employs several sophisticated approaches to identify
 context-dependent regulatory interactions:
 
-1.  **Interaction Term Analysis**: Examines how regulatory relationships
-    change across different biological contexts
-2.  **Conditional Correlation Analysis**: Identifies correlations that
-    are context-specific
-3.  **Multi-variable Regression**: Models complex regulatory networks
-    with interaction terms
-4.  **Network Inference**: Constructs context-specific regulatory
-    networks
+1. **Interaction Term Analysis**: Examines how regulatory relationships change across different biological contexts
+2. **Conditional Correlation Analysis**: Identifies correlations that are context-specific
+3. **Multi-variable Regression**: Models complex regulatory networks with interaction terms
+4. **Network Inference**: Constructs context-specific regulatory networks
 
 ## 📁 Project Structure
 
-```         
+```text
 ConTra/
 ├── code/
-│   ├── context_dependent_analysis.py      # Main analysis pipeline
-│   ├── subset_context_dependent_analysis.py # Subset analysis tools
-│   └── requirements.txt                   # Python dependencies
+│   ├── context_dependent_analysis.py  # Unified full + subset analysis script
+│   └── requirements.txt               # Python dependencies
 ├── data/
-│   └── cleaned_datasets/                 # Input data files
-├── output/                               # Generated results (created at runtime)
-├── LICENSE                               # MIT License
-└── README.md                             # This file
+│   └── cleaned_datasets/             # Input data files
+├── output/                           # Generated results (created at runtime)
+├── LICENSE                           # MIT License
+└── README.md                         # This file
 ```
 
-### Script Differences
-
-**`context_dependent_analysis.py`** - **Full Analysis Pipeline**
-- Analyzes **ALL 36,084 genes** in the dataset
-- Comprehensive regulatory interaction analysis across all genes
-- Higher computational requirements but complete coverage
-
-**`subset_context_dependent_analysis.py`** - **Subset Analysis Tools**
-- Analyzes **500 genes** (randomly sampled from the full dataset)
-- Faster execution for testing and development
-- Lower computational requirements (~5 min on 48 cores)
+Deprecated: The previous `subset_context_dependent_analysis.py` has been merged—use the unified script with `--mode subset`.
 
 ## 🤝 Contributing
 
@@ -174,12 +207,11 @@ contribute:
 
 ### How to Contribute
 
-1.  **Fork** the repository
-2.  **Create** a feature branch
-    (`git checkout -b feature/amazing-feature`)
-3.  **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4.  **Push** to the branch (`git push origin feature/amazing-feature`)
-5.  **Open** a Pull Request
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
+3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
+4. **Push** to the branch (`git push origin feature/amazing-feature`)
+5. **Open** a Pull Request
 
 
 
@@ -190,18 +222,14 @@ This project is licensed under the MIT License - see the
 
 ## 🙏 Acknowledgments
 
--   **Steven Roberts** - Project maintainer and primary developer
--   **Open Source Community** - For the excellent libraries that make
-    this project possible
--   **Contributors** - Everyone who has helped improve ConTra
+- **Steven Roberts** - Project maintainer and primary developer
+- **Open Source Community** - For the excellent libraries that make this project possible
+- **Contributors** - Everyone who has helped improve ConTra
 
 ## 📞 Contact
 
--   **Issues**: [GitHub
-    Issues](https://github.com/sr320/ConTra/issues)
--   **Discussions**: [GitHub
-    Discussions](https://github.com/sr320/ConTra/discussions)
--   
+- **Issues**: [GitHub Issues](https://github.com/sr320/ConTra/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/sr320/ConTra/discussions)
 
 
 ------------------------------------------------------------------------
