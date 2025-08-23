@@ -36,6 +36,15 @@ import base64
 from datetime import datetime
 from typing import Dict, List, Tuple, Any
 
+# Attempt to select a more efficient start method on Unix-like systems to reduce
+# process spawn overhead and improve CPU saturation. 'fork' avoids re-pickling
+# large objects when safe. If already set or unsupported, this is silently ignored.
+try:  # noqa: E722
+    if os.name == 'posix':
+        mp.set_start_method('fork', force=False)
+except Exception:  # noqa: E722
+    pass
+
 warnings.filterwarnings('ignore')
 import matplotlib
 matplotlib.use('Agg')
@@ -799,27 +808,37 @@ class OptimizedContextDependentRegulationAnalysis:
             return None
             
     def optimized_infer_context_specific_networks(self):
-        print("  🔄 Inferring context-specific regulatory networks (parallelized)...")
+        print("  🔄 Inferring context-specific regulatory networks (single-pool parallelization)...")
+        # Avoid nested ProcessPoolExecutors (previous version spawned a pool per context inside another pool),
+        # which can cause oversubscription / coordinator overhead on macOS (spawn) and reduce effective CPU usage.
         context_networks = {}
         contexts_to_analyze = [
             ('high_mirna', 0.5),
             ('low_mirna', -0.5),
             ('high_methylation', 0.5)
         ]
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as ex:
-            futures = {ex.submit(self._analyze_context_network_parallel, c, t): c for c, t in contexts_to_analyze}
-            for fut in as_completed(futures):
-                context = futures[fut]
-                try:
-                    context_networks[context] = fut.result()
-                    print(f"    ✅ {context} context analysis completed")
-                except Exception as e:
-                    print(f"    ❌ {context} context analysis failed: {e}")
-                    context_networks[context] = {k: [] for k in ['gene_mirna_correlations','gene_lncrna_correlations','gene_methylation_correlations']}
+        for context_name, threshold in contexts_to_analyze:
+            try:
+                context_networks[context_name] = self._analyze_context_network_parallel(context_name, threshold)
+                print(f"    ✅ {context_name} context analysis completed")
+            except Exception as e:  # pragma: no cover
+                print(f"    ❌ {context_name} context analysis failed: {e}")
+                context_networks[context_name] = {k: [] for k in ['gene_mirna_correlations','gene_lncrna_correlations','gene_methylation_correlations']}
         return context_networks
         
     def _analyze_context_network_parallel(self, context_name: str, threshold: float) -> Dict:
-        print(f"    🔄 Processing {context_name} context with {self.n_jobs} workers...")
+        """Analyze a single context's regulatory networks in parallel over gene chunks.
+
+        Parameters
+        ----------
+        context_name : str
+            Name of the context (e.g., 'high_mirna').
+        threshold : float
+            Z-score threshold used to select samples belonging to the context.
+        """
+        # NOTE: This function itself launches a ProcessPoolExecutor over gene chunks.
+        # It should only be called from a non-process-pool context to avoid nesting.
+        print(f"    🔄 Processing {context_name} context with {self.n_jobs} workers (single level pool)...")
         context_networks = {k: [] for k in ['gene_mirna_correlations','gene_lncrna_correlations','gene_methylation_correlations']}
         # Gene sampling
         if self.CONFIG[self.mode]['context_network_gene_limit'] is None:
