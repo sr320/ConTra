@@ -13,6 +13,10 @@ leverages parallel processing, vectorized operations, and
 memory-efficient algorithms to analyze complex biological regulatory
 networks.
 
+## 🌐 Live Shiny App
+
+A public Shiny app for interactive exploration is available: [ConTra: Gene Regulator Visualization](https://sr320.shinyapps.io/contra-facet-z/)
+
 ## 🚀 Features
 
 - **Multi-omics Integration**: Analyzes gene expression, lncRNA, miRNA, and DNA methylation data

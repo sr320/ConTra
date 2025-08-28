@@ -13,7 +13,7 @@ source("data_functions.R")
 # Load data on app startup
 message("Loading ConTra datasets...")
 data_list <- load_contra_data()
-gene_choices <- get_gene_choices(data_list$genes)
+gene_choices <- get_gene_choices(data_list$genes, data_list$interactions)
 message("Data loaded successfully!")
 
 # Define UI

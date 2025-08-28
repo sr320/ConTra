@@ -23,6 +23,7 @@ install_if_missing("readr")
 install_if_missing("dplyr")
 install_if_missing("tidyr")
 install_if_missing("stringr")
+install_if_missing("jsonlite")
 
 # Plotting
 install_if_missing("ggplot2")
