@@ -266,6 +266,7 @@ This project is licensed under the MIT License - see the
 -   **Open Source Community** - For the excellent libraries that make
     this project possible
 -   **Contributors** - Everyone who has helped improve ConTra
+-   **Support**- This material is based upon work supported by the National Science Foundation under [award 1921149](https://www.nsf.gov/awardsearch/showAward?AWD_ID=1921149). Any opinions, findings, and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the National Science Foundation.
 
 ## 📞 Contact
 
