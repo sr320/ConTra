@@ -274,7 +274,7 @@ This project is licensed under the MIT License - see the
     Issues](https://github.com/sr320/ConTra/issues)
 -   **Discussions**: [GitHub
     Discussions](https://github.com/sr320/ConTra/discussions)
--   
+
 
 
 ------------------------------------------------------------------------
