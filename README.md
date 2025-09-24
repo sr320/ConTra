@@ -59,12 +59,6 @@ cd ConTra
 2.  Install dependencies:
 
 ``` bash
-pip install -r code/requirements.txt
-```
-
-or 
-
-``` bash
 python3 -m pip install -r code/requirements.txt
 ```
 
