@@ -61,6 +61,36 @@ python3 -m pip install -r code/requirements.txt
 
 ## 📊 Usage
 
+### Clean new raw data (full-species-24)
+
+If you want to analyze the raw files in `data/full-species-24`, first clean and standardize them into the same format as `data/cleaned_datasets`:
+
+1) Clean a species (apul shown; choices: apul, peve, ptua)
+
+```bash
+python code/clean_full_species_data.py --species apul --source-dir data/full-species-24 --out-subdir cleaned_apul
+```
+
+This creates `data/full-species-24/cleaned_apul/` with:
+
+- gene_counts_cleaned.csv
+- lncrna_counts_cleaned.csv
+- mirna_counts_cleaned.csv
+- wgbs_counts_cleaned.csv
+- *_summary.txt and combined_summary.txt
+
+2) Point the analysis scripts at the cleaned folder using `--data-dir`.
+
+```bash
+# Subset (fast) analysis
+python code/subset_context_dependent_analysis.py --data-dir data/full-species-24/cleaned_apul
+
+# Full analysis
+python code/context_dependent_analysis.py --data-dir data/full-species-24/cleaned_apul
+```
+
+You can also pass an absolute path to `--data-dir`.
+
 ### Data Format
 
 The repository provides pre-cleaned and standardized multi-omics
@@ -144,8 +174,9 @@ context-dependent regulatory interactions:
 ```         
 ConTra/
 ├── code/
-│   ├── context_dependent_analysis.py      # Main analysis pipeline
-│   ├── subset_context_dependent_analysis.py # Subset analysis tools
+│   ├── context_dependent_analysis.py      # Main analysis pipeline (supports --data-dir)
+│   ├── subset_context_dependent_analysis.py # Subset analysis tools (supports --data-dir)
+│   ├── clean_full_species_data.py         # Cleaning script for data/full-species-24
 │   └── requirements.txt                   # Python dependencies
 ├── data/
 │   └── cleaned_datasets/                 # Input data files

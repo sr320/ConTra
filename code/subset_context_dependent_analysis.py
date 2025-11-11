@@ -55,8 +55,11 @@ class OptimizedContextDependentRegulationAnalysis:
         # FIXED: Get workspace root directory (parent of code directory)
         self.workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-        # Set absolute paths relative to workspace root
-        self.data_dir = os.path.join(self.workspace_root, data_dir)
+        # Set absolute paths relative to workspace root (support absolute paths too)
+        if os.path.isabs(data_dir):
+            self.data_dir = data_dir
+        else:
+            self.data_dir = os.path.join(self.workspace_root, data_dir)
         self.datasets = {}
         self.results = {}
         
@@ -1558,11 +1561,19 @@ class OptimizedContextDependentRegulationAnalysis:
         print("="*80)
 
 def main():
-    """Main function to run the optimized context-dependent analysis."""
-    # Initialize optimized analysis
-    analysis = OptimizedContextDependentRegulationAnalysis()
-    
-    # Run complete analysis
+    """Main function to run the optimized context-dependent analysis (subset version).
+
+    Adds CLI argument --data-dir so users can point the analysis at an alternate
+    cleaned dataset folder (e.g. data/full-species-24/cleaned_apul) and optionally override worker count.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run subset context-dependent regulation analysis")
+    parser.add_argument("--data-dir", default="data/cleaned_datasets", help="Path (relative to repo root) to cleaned dataset directory")
+    parser.add_argument("--n-jobs", type=int, default=None, help="Optional override for parallel worker count")
+    args = parser.parse_args()
+
+    analysis = OptimizedContextDependentRegulationAnalysis(data_dir=args.data_dir, n_jobs=args.n_jobs)
     analysis.run_complete_context_analysis()
 
 if __name__ == "__main__":
