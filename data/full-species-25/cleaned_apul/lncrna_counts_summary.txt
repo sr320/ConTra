@@ -1,0 +1,4 @@
+Dataset: lncrna
+Features: 15559
+Samples: 39
+Sparsity: 3.82%

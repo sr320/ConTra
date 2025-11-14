@@ -1,0 +1,6 @@
+Original rows: 3851047
+Rows after dropna: 239001
+Rows after threshold (> 10.0): 104459
+Features: 104459
+Samples: 36
+Sparsity: 26.63%
