@@ -1415,6 +1415,36 @@ class OptimizedContextDependentRegulationAnalysis:
                         file_size = os.path.getsize(file_path) / 1024  # KB
                         f.write(f"- **{csv_file}** ({file_size:.1f} KB)\n")
                 f.write("\n")
+
+            # Explain key table types and how to interpret statistical confidence
+            f.write("### Table Definitions and Statistical Confidence\n\n")
+            f.write("Below is a brief description of the main table types and how to assess statistical confidence for each:\n\n")
+
+            f.write("- **methylation_mirna_context.csv**:\n")
+            f.write("  - One row per gene–CpG–miRNA triplet.\n")
+            f.write("  - Contains regression-based metrics (`r2_*`, `improvement_from_regulator2`, `improvement_from_interaction`), conditional correlations (`corr_high_regulator2`, `corr_low_regulator2`), and `context_strength`.\n")
+            f.write("  - When empirical FDR is enabled, includes `empirical_fdr_threshold`, `empirical_fdr_estimated`, and `empirical_fdr_significant`.\n")
+            f.write("  - **How to assess confidence**: prioritize interactions with `empirical_fdr_significant == True` (if available); otherwise, use `context_strength` as the primary effect-size metric, ideally cross-referenced against random-data null runs.\n\n")
+
+            f.write("- **high_methylation_gene_methylation_correlations.csv** / **high_methylation_gene_mirna_correlations.csv** / **high_methylation_gene_lncrna_correlations.csv**:\n")
+            f.write("  - Correlation networks in the **high-methylation context**, defined using a sentinel CpG site.\n")
+            f.write("  - Each row is a gene–regulator pair with a Pearson correlation (`correlation`) and raw `p_value` computed only within high-methylation samples.\n")
+            f.write("  - **How to assess confidence**: these p-values are not corrected for multiple testing; treat them as exploratory. For higher confidence, focus on strong effect sizes (|correlation| close to 1) and/or overlap with FDR-supported context interactions from `methylation_mirna_context.csv`.\n\n")
+
+            f.write("- **low_mirna_gene_methylation_correlations.csv** / **low_mirna_gene_mirna_correlations.csv** / **low_mirna_gene_lncrna_correlations.csv**:\n")
+            f.write("  - Correlation networks in the **low-miRNA context**, using a sentinel miRNA as the context-defining variable.\n")
+            f.write("  - Each row is a gene–regulator pair with a Pearson correlation (`correlation`) and raw `p_value` computed only within low-miRNA samples.\n")
+            f.write("  - **How to assess confidence**: as above, p-values are unadjusted across many tests; use them as a guide for ranking, not strict significance. Strong |correlation| and consistency with patterns seen in `methylation_mirna_context.csv` or across contexts provide more persuasive evidence.\n\n")
+
+            f.write("- **lncrna_mirna_context.csv** (if lncRNA context module is enabled):\n")
+            f.write("  - Regression-based lncRNA–miRNA–gene context metrics analogous to `methylation_mirna_context.csv`.\n")
+            f.write("  - Empirical comparisons with randomized data suggest that current interaction metrics here are more exploratory; interpret \"context-dependent\" calls cautiously.\n")
+            f.write("  - **How to assess confidence**: use this table primarily for hypothesis generation or to find lncRNAs associated with genes that already have strong methylation–miRNA context signals.\n\n")
+
+            f.write("- **multi_way_interactions.csv** (if multi-way module is enabled):\n")
+            f.write("  - Summarizes multi-regulator regression models for each gene, comparing a simple model to a full model with many regulators.\n")
+            f.write("  - Contains `improvement_from_regulators` and an F-test `interaction_p_value` with a boolean `has_significant_interactions`.\n")
+            f.write("  - **How to assess confidence**: current evidence shows that large improvements can also arise in randomized data; treat these results as exploratory and consider additional validation (e.g., overlap with simpler context metrics or external datasets).\n\n")
             
             # Analysis Parameters
             f.write("## Analysis Parameters\n\n")
