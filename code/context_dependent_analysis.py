@@ -35,7 +35,7 @@ import gc
 import time
 import base64
 from datetime import datetime
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 
 # FIXED: Ensure pandas is available for NaN handling
 import pandas as pd
@@ -50,8 +50,29 @@ plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 
 class OptimizedContextDependentRegulationAnalysis:
-    def __init__(self, data_dir="data/cleaned_datasets", n_jobs=None):
-        """Initialize the optimized context-dependent analysis."""
+    def __init__(
+        self,
+        data_dir: str = "data/cleaned_datasets",
+        n_jobs: Optional[int] = None,
+        enable_empirical_fdr: bool = False,
+        null_replicates: int = 1,
+        fdr_alpha: float = 0.3,
+        random_seed: Optional[int] = None,
+        enable_lncrna_context: bool = False,
+        enable_multi_way: bool = False,
+    ):
+        """Initialize the optimized context-dependent analysis.
+
+        Args:
+            data_dir: Path to cleaned multi-omics dataset directory.
+            n_jobs: Optional override for parallel worker count.
+            enable_empirical_fdr: If True, automatically run a null/random analysis
+                and compute empirical FDR thresholds for key metrics.
+            null_replicates: Number of randomized null datasets to analyze
+                (each replicate generates a fresh permuted dataset).
+            fdr_alpha: Target FDR level for empirical thresholding.
+            random_seed: Optional base random seed for reproducible null generation.
+        """
         # FIXED: Get workspace root directory (parent of code directory)
         self.workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
@@ -62,6 +83,16 @@ class OptimizedContextDependentRegulationAnalysis:
             self.data_dir = os.path.join(self.workspace_root, data_dir)
         self.datasets = {}
         self.results = {}
+
+        # Empirical FDR and module configuration
+        self.enable_empirical_fdr = bool(enable_empirical_fdr)
+        self.null_replicates = max(0, int(null_replicates)) if null_replicates is not None else 0
+        self.fdr_alpha = float(fdr_alpha)
+        self.random_seed = random_seed
+        # By default, only methylation–miRNA context is treated as core;
+        # lncRNA–miRNA context and multi-way interactions are optional.
+        self.enable_lncrna_context = bool(enable_lncrna_context)
+        self.enable_multi_way = bool(enable_multi_way)
         
         # Set number of jobs for parallel processing
         if n_jobs is None:
@@ -173,13 +204,21 @@ class OptimizedContextDependentRegulationAnalysis:
         print("\n1. 🔄 Analyzing methylation-gene interactions dependent on miRNA levels (parallelized)...")
         methylation_mirna_context = self.parallel_analyze_methylation_mirna_context()
         
-        # 2. Analyze lncRNA-gene interactions dependent on miRNA levels (parallelized)
-        print("\n2. 🔄 Analyzing lncRNA-gene interactions dependent on miRNA levels (parallelized)...")
-        lncrna_mirna_context = self.parallel_analyze_lncrna_mirna_context()
+        # 2. Analyze lncRNA-gene interactions dependent on miRNA levels (optional, parallelized)
+        if self.enable_lncrna_context:
+            print("\n2. 🔄 Analyzing lncRNA-gene interactions dependent on miRNA levels (parallelized)...")
+            lncrna_mirna_context = self.parallel_analyze_lncrna_mirna_context()
+        else:
+            print("\n2. ⏭️ Skipping lncRNA-gene context analysis (disabled by default).")
+            lncrna_mirna_context = pd.DataFrame()
         
-        # 3. Analyze multi-way regulatory interactions (parallelized)
-        print("\n3. 🔄 Analyzing multi-way regulatory interactions (parallelized)...")
-        multi_way_interactions = self.parallel_analyze_multi_way_interactions()
+        # 3. Analyze multi-way regulatory interactions (optional, parallelized)
+        if self.enable_multi_way:
+            print("\n3. 🔄 Analyzing multi-way regulatory interactions (parallelized)...")
+            multi_way_interactions = self.parallel_analyze_multi_way_interactions()
+        else:
+            print("\n3. ⏭️ Skipping multi-way interaction analysis (disabled by default).")
+            multi_way_interactions = pd.DataFrame()
         
         # 4. Context-specific regulatory network inference (optimized)
         print("\n4. 🔄 Inferring context-specific regulatory networks (optimized)...")
@@ -196,6 +235,171 @@ class OptimizedContextDependentRegulationAnalysis:
         total_time = time.time() - start_time
         print(f"\n⏱️  Total analysis time: {total_time:.1f} seconds ({total_time/60:.1f} minutes)")
         print("✅ Context-dependent analysis completed with parallel processing!")
+
+    # ------------------------------------------------------------------
+    # Empirical FDR utilities
+    # ------------------------------------------------------------------
+
+    def _generate_random_datasets(self, random_state: Optional[int] = None) -> Dict[str, pd.DataFrame]:
+        """Generate randomized datasets for empirical null analysis.
+
+        Each feature (row) has its sample values independently permuted,
+        preserving marginal distributions but destroying cross-feature
+        relationships (gene–regulator structure).
+        """
+        rng = np.random.default_rng(random_state)
+        random_datasets: Dict[str, pd.DataFrame] = {}
+
+        for key, df in self.datasets.items():
+            values = df.values.copy()
+            # Shuffle each feature across samples independently
+            for i in range(values.shape[0]):
+                rng.shuffle(values[i, :])
+            random_datasets[key] = pd.DataFrame(values, index=df.index, columns=df.columns)
+
+        return random_datasets
+
+    def _empirical_fdr_threshold(
+        self,
+        real_values: pd.Series,
+        random_values: pd.Series,
+        q_target: float = 0.3,
+        min_quantile: float = 0.5,
+        max_quantile: float = 0.99,
+        n_steps: int = 50,
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Compute an empirical FDR threshold based on a null distribution.
+
+        Returns:
+            (threshold, estimated_fdr) or (None, None) if no threshold
+            achieves the target FDR.
+        """
+        real = pd.Series(real_values).dropna().astype(float)
+        rand = pd.Series(random_values).dropna().astype(float)
+
+        if real.empty or rand.empty:
+            return None, None
+
+        n_real = len(real)
+        n_rand = len(rand)
+        if n_rand == 0:
+            return None, None
+
+        scale = n_real / n_rand
+
+        qs = np.linspace(min_quantile, max_quantile, n_steps)
+        for q in qs:
+            t = real.quantile(q)
+            R = (real > t).sum()
+            if R == 0:
+                continue
+            V = (rand > t).sum() * scale
+            fdr = V / R
+            if fdr <= q_target:
+                return float(t), float(fdr)
+
+        return None, None
+
+    def _apply_empirical_fdr_to_results(self, random_results: Dict[str, pd.DataFrame]) -> None:
+        """Apply empirical FDR thresholding to context-dependent results."""
+        if 'context_dependent' not in self.results:
+            return
+
+        # Currently, only methylation–miRNA context_strength behaves robustly
+        # (real > random); other metrics can still be inspected but are not
+        # thresholded here.
+        real_meth = self.results['context_dependent'].get('methylation_mirna_context', pd.DataFrame())
+        rand_meth = random_results.get('methylation_mirna_context', pd.DataFrame())
+
+        if isinstance(real_meth, pd.DataFrame) and not real_meth.empty and isinstance(rand_meth, pd.DataFrame) and not rand_meth.empty:
+            if 'context_strength' in real_meth.columns and 'context_strength' in rand_meth.columns:
+                print("\n📊 Computing empirical FDR threshold for methylation–miRNA context_strength...")
+                thr, est_fdr = self._empirical_fdr_threshold(
+                    real_meth['context_strength'],
+                    rand_meth['context_strength'],
+                    q_target=self.fdr_alpha,
+                )
+                if thr is not None:
+                    print(
+                        f"  • Empirical FDR threshold (q={self.fdr_alpha:.2f}) "
+                        f"on context_strength: {thr:.3f} (estimated FDR ≈ {est_fdr:.3f})"
+                    )
+                    real_meth = real_meth.copy()
+                    real_meth['empirical_fdr_threshold'] = thr
+                    real_meth['empirical_fdr_estimated'] = est_fdr
+                    real_meth['empirical_fdr_significant'] = real_meth['context_strength'] >= thr
+                    self.results['context_dependent']['methylation_mirna_context'] = real_meth
+                else:
+                    print(
+                        f"  ⚠️ No context_strength threshold found that achieves "
+                        f"target empirical FDR q={self.fdr_alpha:.2f} for methylation–miRNA."
+                    )
+
+    def run_empirical_fdr_analysis(self) -> None:
+        """Run randomized null analyses and compute empirical FDR thresholds."""
+        if not self.enable_empirical_fdr or self.null_replicates <= 0:
+            return
+
+        print("\n" + "="*80)
+        print("🔬 RUNNING EMPIRICAL FDR ANALYSIS USING RANDOMIZED DATASETS")
+        print("="*80)
+
+        random_results_per_replicate: List[Dict[str, pd.DataFrame]] = []
+
+        base_seed = self.random_seed if self.random_seed is not None else int(time.time())
+
+        for rep in range(self.null_replicates):
+            rep_seed = base_seed + rep
+            print(f"\n  🔄 Generating randomized datasets for null replicate {rep + 1}/{self.null_replicates} (seed={rep_seed})...")
+
+            # Generate random datasets and temporarily swap into the analysis object
+            random_datasets = self._generate_random_datasets(random_state=rep_seed)
+            original_datasets = self.datasets
+            original_gene_array = getattr(self, "gene_array", None)
+            original_lncrna_array = getattr(self, "lncrna_array", None)
+            original_mirna_array = getattr(self, "mirna_array", None)
+            original_methylation_array = getattr(self, "methylation_array", None)
+
+            try:
+                self.datasets = random_datasets
+                self._precompute_data_arrays()
+
+                # Run only the context analyses needed for FDR (skip multi-way, networks)
+                meth_rand = self.parallel_analyze_methylation_mirna_context()
+                lncrna_rand = self.parallel_analyze_lncrna_mirna_context()
+
+                random_results_per_replicate.append(
+                    {
+                        "methylation_mirna_context": meth_rand,
+                        "lncrna_mirna_context": lncrna_rand,
+                    }
+                )
+            finally:
+                # Restore original datasets and arrays
+                self.datasets = original_datasets
+                if original_gene_array is not None:
+                    self.gene_array = original_gene_array
+                if original_lncrna_array is not None:
+                    self.lncrna_array = original_lncrna_array
+                if original_mirna_array is not None:
+                    self.mirna_array = original_mirna_array
+                if original_methylation_array is not None:
+                    self.methylation_array = original_methylation_array
+
+        # Combine random results across replicates
+        combined_random_results: Dict[str, pd.DataFrame] = {}
+        for key in ["methylation_mirna_context", "lncrna_mirna_context"]:
+            dfs = [
+                rep_results[key]
+                for rep_results in random_results_per_replicate
+                if key in rep_results and isinstance(rep_results[key], pd.DataFrame) and not rep_results[key].empty
+            ]
+            if dfs:
+                combined_random_results[key] = pd.concat(dfs, ignore_index=True)
+            else:
+                combined_random_results[key] = pd.DataFrame()
+
+        self._apply_empirical_fdr_to_results(combined_random_results)
         
     def parallel_analyze_methylation_mirna_context(self):
         """Analyze methylation-gene interactions dependent on miRNA levels using parallel processing."""
@@ -1101,19 +1305,36 @@ class OptimizedContextDependentRegulationAnalysis:
                 if not meth_mirna.empty:
                     f.write("### Methylation-miRNA Context Analysis\n\n")
                     f.write(f"- **Total interactions analyzed:** {len(meth_mirna)}\n")
-                    f.write(f"- **Context-dependent interactions:** {meth_mirna['context_dependent'].sum()}\n")
+                    if 'context_dependent' in meth_mirna.columns:
+                        f.write(f"- **Context-dependent interactions (F-test):** {meth_mirna['context_dependent'].sum()}\n")
                     f.write(f"- **Mean improvement from interaction:** {meth_mirna['improvement_from_interaction'].mean():.3f}\n")
-                    f.write(f"- **Mean context strength:** {meth_mirna['context_strength'].mean():.3f}\n\n")
+                    f.write(f"- **Mean context strength:** {meth_mirna['context_strength'].mean():.3f}\n")
+
+                    # Empirical FDR summary (if available)
+                    if 'empirical_fdr_significant' in meth_mirna.columns:
+                        sig_count = int(meth_mirna['empirical_fdr_significant'].sum())
+                        thr_val = meth_mirna['empirical_fdr_threshold'].dropna().iloc[0] if meth_mirna['empirical_fdr_threshold'].notna().any() else None
+                        est_fdr = meth_mirna['empirical_fdr_estimated'].dropna().iloc[0] if meth_mirna['empirical_fdr_estimated'].notna().any() else None
+                        f.write(f"- **Empirical FDR target (q):** {self.fdr_alpha:.2f}\n")
+                        if thr_val is not None and est_fdr is not None:
+                            f.write(f"- **Empirical FDR context_strength threshold:** {thr_val:.3f} (estimated FDR ≈ {est_fdr:.3f})\n")
+                            f.write(f"- **Empirical FDR-significant interactions:** {sig_count}\n")
+                    f.write("\n")
                     
-                    # Top interactions table
+                    # Top interactions table (ranked by context_strength, which empirically separates real vs random)
                     if len(meth_mirna) > 0:
-                        f.write("#### Top 10 Methylation-miRNA Interactions\n\n")
-                        f.write("*This table shows genes whose regulation by DNA methylation is context-dependent on miRNA expression levels, indicating epigenetic-regulatory crosstalk.*\n\n")
-                        top_interactions = meth_mirna.nlargest(10, 'improvement_from_interaction')
-                        f.write("| Rank | Gene | Methylation | miRNA | Improvement | Context Strength |\n")
-                        f.write("|------|------|-------------|-------|-------------|------------------|\n")
+                        f.write("#### Top 10 Methylation-miRNA Interactions (by Context Strength)\n\n")
+                        f.write("*This table shows genes whose regulation by DNA methylation is context-dependent on miRNA expression levels, ranked by context strength.*\n\n")
+                        top_interactions = meth_mirna.nlargest(10, 'context_strength')
+                        f.write("| Rank | Gene | Methylation | miRNA | Improvement | Context Strength | Empirical FDR Sig. |\n")
+                        f.write("|------|------|-------------|-------|-------------|------------------|--------------------|\n")
                         for i, (_, row) in enumerate(top_interactions.iterrows(), 1):
-                            f.write(f"| {i} | {row.get('target', 'N/A')} | {row.get('regulator1', 'N/A')} | {row.get('regulator2', 'N/A')} | {row.get('improvement_from_interaction', 0):.3f} | {row.get('context_strength', 0):.3f} |\n")
+                            emp_sig = row.get('empirical_fdr_significant', False)
+                            f.write(
+                                f"| {i} | {row.get('target', 'N/A')} | {row.get('regulator1', 'N/A')} | "
+                                f"{row.get('regulator2', 'N/A')} | {row.get('improvement_from_interaction', 0):.3f} | "
+                                f"{row.get('context_strength', 0):.3f} | {emp_sig} |\n"
+                            )
                         f.write("\n")
                 else:
                     f.write("### Methylation-miRNA Context Analysis\n\n")
@@ -1122,16 +1343,17 @@ class OptimizedContextDependentRegulationAnalysis:
                 # lncRNA-miRNA context
                 lncrna_mirna = self.results['context_dependent'].get('lncrna_mirna_context', pd.DataFrame())
                 if not lncrna_mirna.empty:
-                    f.write("### lncRNA-miRNA Context Analysis\n\n")
+                    f.write("### lncRNA-miRNA Context Analysis (Exploratory)\n\n")
                     f.write(f"- **Total interactions analyzed:** {len(lncrna_mirna)}\n")
-                    f.write(f"- **Context-dependent interactions:** {lncrna_mirna['context_dependent'].sum()}\n")
+                    if 'context_dependent' in lncrna_mirna.columns:
+                        f.write(f"- **Context-dependent interactions (F-test):** {lncrna_mirna['context_dependent'].sum()}\n")
                     f.write(f"- **Mean improvement from interaction:** {lncrna_mirna['improvement_from_interaction'].mean():.3f}\n")
                     f.write(f"- **Mean context strength:** {lncrna_mirna['context_strength'].mean():.3f}\n\n")
                     
-                    # Top interactions table
+                    # Top interactions table (still ranked by improvement; metrics are exploratory)
                     if len(lncrna_mirna) > 0:
-                        f.write("#### Top 10 lncRNA-miRNA Interactions\n\n")
-                        f.write("*This table identifies genes whose lncRNA-mediated regulation varies depending on miRNA expression, revealing competitive endogenous RNA (ceRNA) network dynamics.*\n\n")
+                        f.write("#### Top 10 lncRNA-miRNA Interactions (Exploratory)\n\n")
+                        f.write("*This table identifies genes whose lncRNA-mediated regulation varies depending on miRNA expression. Note that current interaction metrics behave similarly or more strongly under randomized data and should be interpreted cautiously.*\n\n")
                         top_interactions = lncrna_mirna.nlargest(10, 'improvement_from_interaction')
                         f.write("| Rank | Gene | lncRNA | miRNA | Improvement | Context Strength |\n")
                         f.write("|------|------|--------|-------|-------------|------------------|\n")
@@ -1139,21 +1361,24 @@ class OptimizedContextDependentRegulationAnalysis:
                             f.write(f"| {i} | {row.get('target', 'N/A')} | {row.get('regulator1', 'N/A')} | {row.get('regulator2', 'N/A')} | {row.get('improvement_from_interaction', 0):.3f} | {row.get('context_strength', 0):.3f} |\n")
                         f.write("\n")
                 else:
-                    f.write("### lncRNA-miRNA Context Analysis\n\n")
-                    f.write("⚠️ **No lncRNA-miRNA interactions found.**\n\n")
+                    f.write("### lncRNA-miRNA Context Analysis (Exploratory)\n\n")
+                    if self.enable_lncrna_context:
+                        f.write("⚠️ **lncRNA-miRNA context module was enabled but no interactions passed the current filters.**\n\n")
+                    else:
+                        f.write("ℹ️ **lncRNA-miRNA context module was not run (disabled by default). Enable with `--enable-lncrna-context` to generate these results.**\n\n")
                 
                 # Multi-way interactions
                 multi_way = self.results['context_dependent'].get('multi_way_interactions', pd.DataFrame())
                 if not multi_way.empty:
-                    f.write("### Multi-Way Interaction Analysis\n\n")
+                    f.write("### Multi-Way Interaction Analysis (Exploratory)\n\n")
                     f.write(f"- **Total genes analyzed:** {len(multi_way)}\n")
-                    f.write(f"- **Genes with significant interactions:** {multi_way['has_significant_interactions'].sum()}\n")
+                    f.write(f"- **Genes with significant interactions (F-test):** {multi_way['has_significant_interactions'].sum()}\n")
                     f.write(f"- **Mean improvement from interactions:** {multi_way['improvement_from_regulators'].mean():.3f}\n\n")
                     
                     # Top multi-way interactions table
                     if len(multi_way) > 0:
-                        f.write("#### Top 10 Multi-Way Interactions\n\n")
-                        f.write("*This table shows genes with the most complex regulatory patterns, where multiple RNA and epigenetic factors coordinately influence gene expression.*\n\n")
+                        f.write("#### Top 10 Multi-Way Interactions (Exploratory)\n\n")
+                        f.write("*This table shows genes with the largest multi-regulator improvements. Current evidence suggests similar improvements can arise under randomized data; treat these results as hypothesis-generating rather than definitive.*\n\n")
                         top_interactions = multi_way.nlargest(10, 'improvement_from_regulators')
                         f.write("| Rank | Gene | Improvement | Significant Interactions |\n")
                         f.write("|------|------|-------------|------------------------|\n")
@@ -1161,8 +1386,11 @@ class OptimizedContextDependentRegulationAnalysis:
                             f.write(f"| {i} | {row.get('gene', 'N/A')} | {row.get('improvement_from_regulators', 0):.3f} | {row.get('has_significant_interactions', False)} |\n")
                         f.write("\n")
                 else:
-                    f.write("### Multi-Way Interaction Analysis\n\n")
-                    f.write("⚠️ **No multi-way interactions found.**\n\n")
+                    f.write("### Multi-Way Interaction Analysis (Exploratory)\n\n")
+                    if self.enable_multi_way:
+                        f.write("⚠️ **Multi-way interaction module was enabled but no genes passed the current significance criteria.**\n\n")
+                    else:
+                        f.write("ℹ️ **Multi-way interaction module was not run (disabled by default). Enable with `--enable-multi-way` to generate these results.**\n\n")
             else:
                 f.write("## Results Summary\n\n")
                 f.write("⚠️ **No context-dependent results available yet.**\n\n")
@@ -1443,6 +1671,10 @@ class OptimizedContextDependentRegulationAnalysis:
         
         # Run context-dependent analysis
         self.analyze_context_dependent_regulation()
+
+        # Optionally run empirical FDR analysis using randomized datasets
+        if self.enable_empirical_fdr and self.null_replicates > 0:
+            self.run_empirical_fdr_analysis()
         
         # Generate visualizations
         self.generate_context_visualizations()
@@ -1474,12 +1706,67 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Run full context-dependent regulation analysis")
-    parser.add_argument("--data-dir", default="data/cleaned_datasets", help="Path (relative to repo root) to cleaned dataset directory")
-    parser.add_argument("--n-jobs", type=int, default=None, help="Optional override for parallel worker count")
+    parser.add_argument(
+        "--data-dir",
+        default="data/cleaned_datasets",
+        help="Path (relative to repo root) to cleaned dataset directory",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=None,
+        help="Optional override for parallel worker count",
+    )
+    parser.add_argument(
+        "--enable-empirical-fdr",
+        action="store_true",
+        help=(
+            "If set, generate randomized null datasets during the run and compute "
+            "empirical FDR thresholds for key metrics (currently methylation–miRNA context_strength)."
+        ),
+    )
+    parser.add_argument(
+        "--null-replicates",
+        type=int,
+        default=1,
+        help="Number of randomized null datasets to analyze for empirical FDR (default: 1).",
+    )
+    parser.add_argument(
+        "--fdr-alpha",
+        type=float,
+        default=0.3,
+        help="Target empirical FDR level for thresholding (default: 0.3).",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=None,
+        help="Optional base random seed for null/random dataset generation.",
+    )
+    parser.add_argument(
+        "--enable-lncrna-context",
+        action="store_true",
+        help="Run lncRNA–miRNA context-dependent analysis (disabled by default).",
+    )
+    parser.add_argument(
+        "--enable-multi-way",
+        action="store_true",
+        help="Run multi-way interaction analysis (disabled by default).",
+    )
+
     args = parser.parse_args()
 
-    # Initialize optimized analysis with user-specified data directory
-    analysis = OptimizedContextDependentRegulationAnalysis(data_dir=args.data_dir, n_jobs=args.n_jobs)
+    # Initialize optimized analysis with user-specified configuration
+    analysis = OptimizedContextDependentRegulationAnalysis(
+        data_dir=args.data_dir,
+        n_jobs=args.n_jobs,
+        enable_empirical_fdr=args.enable_empirical_fdr,
+        null_replicates=args.null_replicates,
+        fdr_alpha=args.fdr_alpha,
+        random_seed=args.random_seed,
+        enable_lncrna_context=args.enable_lncrna_context,
+        enable_multi_way=args.enable_multi_way,
+    )
 
     # Run complete analysis
     analysis.run_complete_context_analysis()

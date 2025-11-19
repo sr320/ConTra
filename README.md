@@ -1,35 +1,21 @@
 # ConTra: Context-Dependent Regulation Analysis
 
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Contributions
-Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](CONTRIBUTING.md)
-[![Issues](https://img.shields.io/badge/issues-open-orange.svg)](https://github.com/sr320/ConTra/issues)
-[![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/sr320/ConTra/pulls)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](CONTRIBUTING.md) [![Issues](https://img.shields.io/badge/issues-open-orange.svg)](https://github.com/sr320/ConTra/issues) [![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/sr320/ConTra/pulls)
 
-**ConTra** is a high-performance Python framework for identifying
-context-dependent regulatory interactions in multi-omics data. It
-leverages parallel processing, vectorized operations, and
-memory-efficient algorithms to analyze complex biological regulatory
-networks.
+**ConTra** is a high-performance Python framework for identifying context-dependent regulatory interactions in multi-omics data. It leverages parallel processing, vectorized operations, and memory-efficient algorithms to analyze complex biological regulatory networks.
 
 ## 🚀 Features
 
--   **Multi-omics Integration**: Analyzes gene expression, lncRNA,
-    miRNA, and DNA methylation data
--   **High-Performance Computing**: Parallel processing across 48+ CPU
-    cores with optimized memory usage
--   **Context-Dependent Analysis**: Identifies regulatory interactions
-    that vary across different biological contexts
+-   **Multi-omics Integration**: Analyzes gene expression, lncRNA, miRNA, and DNA methylation data
+-   **High-Performance Computing**: Parallel processing across 48+ CPU cores with optimized memory usage
+-   **Context-Dependent Analysis**: Identifies regulatory interactions that vary across different biological contexts
 -   **Advanced Statistical Methods**:
     -   Interaction term analysis
     -   Conditional correlation analysis
     -   Multi-variable regression with interaction terms
     -   Context-specific regulatory network inference
--   **Memory Optimization**: Efficient batch processing using up to
-    247GB RAM
--   **Comprehensive Output**: Generates plots, tables, and detailed
-    reports
+-   **Memory Optimization**: Efficient batch processing using up to 247GB RAM
+-   **Comprehensive Output**: Generates plots, tables, and detailed reports
 
 ## 📋 Requirements
 
@@ -52,12 +38,11 @@ cd ConTra
 pip install -r code/requirements.txt
 ```
 
-or 
+or
 
 ``` bash
 python3 -m pip install -r code/requirements.txt
 ```
-
 
 ## 📊 Usage
 
@@ -65,23 +50,23 @@ python3 -m pip install -r code/requirements.txt
 
 If you want to analyze the raw files in `data/full-species-24`, first clean and standardize them into the same format as `data/cleaned_datasets`:
 
-1) Clean a species (apul shown; choices: apul, peve, ptua)
+1)  Clean a species (apul shown; choices: apul, peve, ptua)
 
-```bash
+``` bash
 python code/clean_full_species_data.py --species apul --source-dir data/full-species-24 --out-subdir cleaned_apul
 ```
 
 This creates `data/full-species-24/cleaned_apul/` with:
 
-- gene_counts_cleaned.csv
-- lncrna_counts_cleaned.csv
-- mirna_counts_cleaned.csv
-- wgbs_counts_cleaned.csv
-- *_summary.txt and combined_summary.txt
+-   gene_counts_cleaned.csv
+-   lncrna_counts_cleaned.csv
+-   mirna_counts_cleaned.csv
+-   wgbs_counts_cleaned.csv
+-   \*\_summary.txt and combined_summary.txt
 
-2) Point the analysis scripts at the cleaned folder using `--data-dir`.
+2)  Point the analysis scripts at the cleaned folder using `--data-dir`.
 
-```bash
+``` bash
 # Subset (fast) analysis
 python code/subset_context_dependent_analysis.py --data-dir data/full-species-24/cleaned_apul
 
@@ -93,14 +78,12 @@ You can also pass an absolute path to `--data-dir`.
 
 ### Data Format
 
-The repository provides pre-cleaned and standardized multi-omics
-datasets ready for immediate analysis. All datasets are in CSV format
-with consistent sample alignment:
+The repository provides pre-cleaned and standardized multi-omics datasets ready for immediate analysis. All datasets are in CSV format with consistent sample alignment:
 
 #### **Available Datasets**
 
 | Dataset                     | Features | Samples | Sparsity | Description                           |
-|---------------|---------------|---------------|---------------|---------------|
+|-----------------------------|----------|---------|----------|---------------------------------------|
 | `gene_counts_cleaned.csv`   | 36,084   | 40      | 37.8%    | Gene expression counts                |
 | `lncrna_counts_cleaned.csv` | 15,900   | 40      | 3.8%     | Long non-coding RNA expression counts |
 | `mirna_counts_cleaned.csv`  | 51       | 40      | 7.8%     | MicroRNA expression counts            |
@@ -108,8 +91,7 @@ with consistent sample alignment:
 
 #### **Sample Structure**
 
-All datasets contain the same **40 samples** representing different time
-points (TP1-TP4) across **10 different conditions**:
+All datasets contain the same **40 samples** representing different time points (TP1-TP4) across **10 different conditions**:
 
 -   **ACR-139**: TP1, TP2, TP3, TP4
 -   **ACR-145**: TP1, TP2, TP3, TP4\
@@ -124,16 +106,11 @@ points (TP1-TP4) across **10 different conditions**:
 
 #### **Data Quality Features**
 
--   **Common sample IDs**: All datasets use identical 40 sample
-    identifiers
--   **No zero expression**: Features with zero expression across all
-    samples removed
--   **Sufficient variation**: Features with limited variation (CV \<
-    0.1) filtered out
--   **Consistent structure**: Same column order and sample alignment
-    across all datasets
+-   **Common sample IDs**: All datasets use identical 40 sample identifiers
+-   **No zero expression**: Features with zero expression across all samples removed
+-   **Sufficient variation**: Features with limited variation (CV \< 0.1) filtered out
+-   **Consistent structure**: Same column order and sample alignment across all datasets
 -   **No missing values**: Complete data matrices ready for analysis
-
 
 #### **File Organization**
 
@@ -150,24 +127,16 @@ data/cleaned_datasets/
 
 #### **Ready for Analysis**
 
-These datasets are immediately usable for: - Multi-omics correlation
-analysis - Time series analysis across TP1-TP4 time points -
-Context-dependent regulatory network inference - Statistical modeling
-and machine learning workflows
+These datasets are immediately usable for: - Multi-omics correlation analysis - Time series analysis across TP1-TP4 time points - Context-dependent regulatory network inference - Statistical modeling and machine learning workflows
 
 ## 🔬 Methodology
 
-ConTra employs several sophisticated approaches to identify
-context-dependent regulatory interactions:
+ConTra employs several sophisticated approaches to identify context-dependent regulatory interactions:
 
-1.  **Interaction Term Analysis**: Examines how regulatory relationships
-    change across different biological contexts
-2.  **Conditional Correlation Analysis**: Identifies correlations that
-    are context-specific
-3.  **Multi-variable Regression**: Models complex regulatory networks
-    with interaction terms
-4.  **Network Inference**: Constructs context-specific regulatory
-    networks
+1.  **Interaction Term Analysis**: Examines how regulatory relationships change across different biological contexts
+2.  **Conditional Correlation Analysis**: Identifies correlations that are context-specific
+3.  **Multi-variable Regression**: Models complex regulatory networks with interaction terms
+4.  **Network Inference**: Constructs context-specific regulatory networks
 
 ## 📁 Project Structure
 
@@ -186,54 +155,61 @@ ConTra/
 ```
 
 ### Script Differences
-
+    
 **`context_dependent_analysis.py`** - **Full Analysis Pipeline**
-- Analyzes **ALL 36,084 genes** in the dataset
-- Comprehensive regulatory interaction analysis across all genes
-- Higher computational requirements but complete coverage
 
+- Analyzes **ALL 36,084 genes** in the dataset
+- By default focuses on the **methylation–miRNA context module**, which empirical tests show has a clear separation between real and randomized data (stronger context_strength in real).
+- Optionally runs additional, more exploratory modules:
+  - **lncRNA–miRNA context** (`--enable-lncrna-context`)
+  - **multi-way interaction analysis** (`--enable-multi-way`)
+- Supports on-the-fly empirical FDR estimation against randomized null datasets via `--enable-empirical-fdr`.
+    
 **`subset_context_dependent_analysis.py`** - **Subset Analysis Tools**
+
 - Analyzes **500 genes** (randomly sampled from the full dataset)
 - Faster execution for testing and development
-- Lower computational requirements (~5 min on 48 cores)
+- Lower computational requirements (\~5 min on 48 cores)
+
+### Empirically supported vs exploratory modules
+
+- **Empirically supported (core by default)**:
+  - **Methylation–miRNA context**: real data shows stronger baseline fits and higher `context_strength` than random, and works well with empirical FDR thresholding.
+- **Exploratory (opt-in via flags)**:
+  - **lncRNA–miRNA context** (`--enable-lncrna-context`):
+    - Baseline lncRNA→gene fits are strong in real data, but the *context* layer (interaction improvements, context_strength) behaves similarly or even more strongly under randomization.
+    - Treat the “context-dependent” flags here as exploratory unless the modeling is refined further.
+  - **Multi-way interactions** (`--enable-multi-way`):
+    - Currently produces large apparent improvements in both real and randomized data but almost no genes pass significance thresholds.
+    - Best viewed as an experimental module that may be disabled in most production runs.
 
 ## 🤝 Contributing
 
-We welcome contributions from the community! Whether you're a
-bioinformatician, data scientist, or developer, there are many ways to
-contribute:
+We welcome contributions from the community! Whether you're a bioinformatician, data scientist, or developer, there are many ways to contribute:
 
 ### How to Contribute
 
 1.  **Fork** the repository
-2.  **Create** a feature branch
-    (`git checkout -b feature/amazing-feature`)
+2.  **Create** a feature branch (`git checkout -b feature/amazing-feature`)
 3.  **Commit** your changes (`git commit -m 'Add amazing feature'`)
 4.  **Push** to the branch (`git push origin feature/amazing-feature`)
 5.  **Open** a Pull Request
 
-
-
 ## 📝 License
 
-This project is licensed under the MIT License - see the
-[LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
 -   **Steven Roberts** - Project maintainer and primary developer
--   **Open Source Community** - For the excellent libraries that make
-    this project possible
+-   **Open Source Community** - For the excellent libraries that make this project possible
 -   **Contributors** - Everyone who has helped improve ConTra
 
 ## 📞 Contact
 
--   **Issues**: [GitHub
-    Issues](https://github.com/sr320/ConTra/issues)
--   **Discussions**: [GitHub
-    Discussions](https://github.com/sr320/ConTra/discussions)
+-   **Issues**: [GitHub Issues](https://github.com/sr320/ConTra/issues)
+-   **Discussions**: [GitHub Discussions](https://github.com/sr320/ConTra/discussions)
 -   
-
 
 ------------------------------------------------------------------------
 
