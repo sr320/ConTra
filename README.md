@@ -1,218 +1,240 @@
-# ConTra: Context-Dependent Regulation Analysis
+## ConTra: Context-Dependent Regulation Analysis
 
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](CONTRIBUTING.md) [![Issues](https://img.shields.io/badge/issues-open-orange.svg)](https://github.com/sr320/ConTra/issues) [![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/sr320/ConTra/pulls)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](CONTRIBUTING.md)
 
-**ConTra** is a high-performance Python framework for identifying context-dependent regulatory interactions in multi-omics data. It leverages parallel processing, vectorized operations, and memory-efficient algorithms to analyze complex biological regulatory networks.
+**ConTra** is a high-performance Python pipeline for identifying context-dependent regulatory interactions in multi-omics data. It leverages parallel processing, vectorized operations, and memory-efficient algorithms to analyze complex regulatory networks involving gene expression, lncRNA, miRNA, and DNA methylation.
 
 ## 🚀 Features
 
--   **Multi-omics Integration**: Analyzes gene expression, lncRNA, miRNA, and DNA methylation data
--   **High-Performance Computing**: Parallel processing across 48+ CPU cores with optimized memory usage
--   **Context-Dependent Analysis**: Identifies regulatory interactions that vary across different biological contexts
--   **Advanced Statistical Methods**:
-    -   Interaction term analysis
-    -   Conditional correlation analysis
-    -   Multi-variable regression with interaction terms
-    -   Context-specific regulatory network inference
--   **Memory Optimization**: Efficient batch processing using up to 247GB RAM
--   **Comprehensive Output**: Generates plots, tables, and detailed reports
+- **Multi-omics integration**: Jointly analyzes gene, lncRNA, miRNA, and DNA methylation data.
+- **Context-dependent analysis**: Detects regulatory relationships that change across biological contexts (e.g. high/low miRNA or methylation states).
+- **Advanced modeling**:
+  - Interaction term analysis via linear regression.
+  - Conditional correlations and context strength metrics.
+  - Optional multi-regulator (multi-way) models.
+- **High-performance computing**: Parallelized across many cores with attention to memory usage.
+- **Rich outputs**: Tables of interactions, context-specific correlation networks, and human-readable reports (Markdown + HTML).
 
 ## 📋 Requirements
 
--   Python 3.8+
--   8GB+ RAM (recommended: 16GB+)
--   Multi-core CPU (recommended: 8+ cores)
+- **Python**: 3.8+
+- **RAM**: 8GB+ (16GB+ recommended for full runs)
+- **CPU**: Multi-core (8+ cores recommended)
 
-## 🛠️ Installation
+Install dependencies from the repo root:
 
-1.  Clone the repository:
-
-``` bash
-git clone https://github.com/sr320/ConTra.git
-cd ConTra
-```
-
-2.  Install dependencies:
-
-``` bash
+```bash
 pip install -r code/requirements.txt
-```
-
-or
-
-``` bash
+# or
 python3 -m pip install -r code/requirements.txt
 ```
 
-## 📊 Usage
+## 📊 Running `context_dependent_analysis.py`
 
-### Clean new raw data (full-species-24)
+### Overview
 
-If you want to analyze the raw files in `data/full-species-24`, first clean and standardize them into the same format as `data/cleaned_datasets`:
+The core entry point for ConTra is **`code/context_dependent_analysis.py`**, which:
 
-1)  Clean a species (apul shown; choices: apul, peve, ptua)
+- **Loads four matched data matrices**: gene expression, lncRNA expression, miRNA expression, and DNA methylation.
+- **Analyzes all genes** using regression models with interaction terms and conditional correlations.
+- **Focuses by default on methylation–miRNA context**, the component that shows robust separation between real and randomized data.
+- Optionally runs additional, exploratory modules (lncRNA–miRNA context, multi-way interactions) and context-specific correlation networks.
 
-``` bash
-python code/clean_full_species_data.py --species apul --source-dir data/full-species-24 --out-subdir cleaned_apul
+Each run creates a timestamped output directory:
+
+- `output/context_dependent_analysis_YYYYMMDD_HHMMSS/`
+  - `tables/` – CSV result tables (core: `methylation_mirna_context.csv`)
+  - `plots/` – PNG figures
+  - `reports/` – Markdown and HTML reports summarizing the analysis
+
+### Quick start on cleaned data
+
+If you have a cleaned dataset under `data/cleaned_datasets` (or another cleaned folder with the required files), run:
+
+```bash
+python code/context_dependent_analysis.py --data-dir data/cleaned_datasets
 ```
 
-This creates `data/full-species-24/cleaned_apul/` with:
+You can also pass an **absolute path** to `--data-dir`.
 
--   gene_counts_cleaned.csv
--   lncrna_counts_cleaned.csv
--   mirna_counts_cleaned.csv
--   wgbs_counts_cleaned.csv
--   \*\_summary.txt and combined_summary.txt
+### Using multi-species cleaned data
 
-2)  Point the analysis scripts at the cleaned folder using `--data-dir`.
+If your repository includes species-specific cleaned folders such as:
 
-``` bash
-# Subset (fast) analysis
-python code/subset_context_dependent_analysis.py --data-dir data/full-species-24/cleaned_apul
+- `data/full-species-24/cleaned_apul`
+- `data/full-species-24/cleaned_peve`
+- `data/full-species-24/cleaned_ptua`
 
-# Full analysis
+you can run:
+
+```bash
 python code/context_dependent_analysis.py --data-dir data/full-species-24/cleaned_apul
+python code/context_dependent_analysis.py --data-dir data/full-species-24/cleaned_peve
 ```
 
-You can also pass an absolute path to `--data-dir`.
+Each invocation produces its own timestamped output folder under `output/`.
 
-### Data Format
+### Running on your own data
 
-The repository provides pre-cleaned and standardized multi-omics datasets ready for immediate analysis. All datasets are in CSV format with consistent sample alignment:
+To use your own multi-omics data, prepare a directory that contains **four CSV files** with **identical sample columns**:
 
-#### **Available Datasets**
+- **Required file names** (must match exactly):
+  - `gene_counts_cleaned.csv`
+  - `lncrna_counts_cleaned.csv`
+  - `mirna_counts_cleaned.csv`
+  - `wgbs_counts_cleaned.csv`
 
-| Dataset                     | Features | Samples | Sparsity | Description                           |
-|-----------------------------|----------|---------|----------|---------------------------------------|
-| `gene_counts_cleaned.csv`   | 36,084   | 40      | 37.8%    | Gene expression counts                |
-| `lncrna_counts_cleaned.csv` | 15,900   | 40      | 3.8%     | Long non-coding RNA expression counts |
-| `mirna_counts_cleaned.csv`  | 51       | 40      | 7.8%     | MicroRNA expression counts            |
-| `wgbs_counts_cleaned.csv`   | 249      | 40      | 41.4%    | WGBS CpG methylation counts           |
+- **File layout**:
+  - **Rows**: features (genes, lncRNAs, miRNAs, CpGs).
+  - **Columns**: samples, with the **same IDs and order** in all four files.
+  - First column: feature identifier (used as the index).
 
-#### **Sample Structure**
+- **Recommended preprocessing**:
+  - Remove features with zero counts across all samples.
+  - Filter out extremely low-variance features.
+  - Ensure **no missing values**.
 
-All datasets contain the same **40 samples** representing different time points (TP1-TP4) across **10 different conditions**:
+Then point the analysis at your folder:
 
--   **ACR-139**: TP1, TP2, TP3, TP4
--   **ACR-145**: TP1, TP2, TP3, TP4\
--   **ACR-150**: TP1, TP2, TP3, TP4
--   **ACR-173**: TP1, TP2, TP3, TP4
--   **ACR-186**: TP1, TP2, TP3, TP4
--   **ACR-225**: TP1, TP2, TP3, TP4
--   **ACR-229**: TP1, TP2, TP3, TP4
--   **ACR-237**: TP1, TP2, TP3, TP4
--   **ACR-244**: TP1, TP2, TP3, TP4
--   **ACR-265**: TP1, TP2, TP3, TP4
-
-#### **Data Quality Features**
-
--   **Common sample IDs**: All datasets use identical 40 sample identifiers
--   **No zero expression**: Features with zero expression across all samples removed
--   **Sufficient variation**: Features with limited variation (CV \< 0.1) filtered out
--   **Consistent structure**: Same column order and sample alignment across all datasets
--   **No missing values**: Complete data matrices ready for analysis
-
-#### **File Organization**
-
-```         
-data/cleaned_datasets/
-├── gene_counts_cleaned.csv      # Main gene expression dataset
-├── lncrna_counts_cleaned.csv    # Main lncRNA expression dataset
-├── mirna_counts_cleaned.csv     # Main miRNA expression dataset
-├── wgbs_counts_cleaned.csv      # Main DNA methylation dataset
-├── *_summary.txt                # Individual dataset statistics
-├── combined_summary.txt         # Overall dataset summary
-└── README.md                    # Detailed data documentation
+```bash
+python code/context_dependent_analysis.py --data-dir /absolute/path/to/your_cleaned_folder
 ```
 
-#### **Ready for Analysis**
+If sample IDs are not aligned or a required file is missing, the script will raise an informative error.
 
-These datasets are immediately usable for: - Multi-omics correlation analysis - Time series analysis across TP1-TP4 time points - Context-dependent regulatory network inference - Statistical modeling and machine learning workflows
+### Key CLI options
 
-## 🔬 Methodology
+- **Core options**:
+  - **`--data-dir PATH`**: directory containing the four cleaned CSVs (default: `data/cleaned_datasets`).
+  - **`--n-jobs INT`**: number of parallel worker processes (default: up to 48, or all available cores).
 
-ConTra employs several sophisticated approaches to identify context-dependent regulatory interactions:
+- **Empirical FDR (recommended for robustness)**:
+  - **`--enable-empirical-fdr`**: generate randomized null datasets and compute empirical FDR thresholds for methylation–miRNA `context_strength`.
+  - **`--null-replicates INT`** (default: `1`): number of randomized null datasets to analyze.
+  - **`--fdr-alpha FLOAT`** (default: `0.3`): target empirical FDR level (e.g. `0.3` for exploratory, `0.1` for stricter).
+  - **`--random-seed INT`**: base random seed for reproducible null generation.
 
-1.  **Interaction Term Analysis**: Examines how regulatory relationships change across different biological contexts
-2.  **Conditional Correlation Analysis**: Identifies correlations that are context-specific
-3.  **Multi-variable Regression**: Models complex regulatory networks with interaction terms
-4.  **Network Inference**: Constructs context-specific regulatory networks
+- **Optional exploratory modules**:
+  - **`--enable-lncrna-context`**:
+    - Runs the lncRNA–miRNA–gene context module.
+    - Current evidence suggests its context metrics behave similarly in real and randomized data; treat results as exploratory.
+  - **`--enable-multi-way`**:
+    - Runs the multi-way interaction module (many regulators per gene).
+    - Large improvements can also appear in null data; use for hypothesis generation.
 
-## 📁 Project Structure
+Example usage with empirical FDR and exploratory modules:
 
-```         
-ConTra/
-├── code/
-│   ├── context_dependent_analysis.py      # Main analysis pipeline (supports --data-dir)
-│   ├── subset_context_dependent_analysis.py # Subset analysis tools (supports --data-dir)
-│   ├── clean_full_species_data.py         # Cleaning script for data/full-species-24
-│   └── requirements.txt                   # Python dependencies
-├── data/
-│   └── cleaned_datasets/                 # Input data files
-├── output/                               # Generated results (created at runtime)
-├── LICENSE                               # MIT License
-└── README.md                             # This file
+```bash
+python code/context_dependent_analysis.py \
+  --data-dir data/full-species-24/cleaned_apul \
+  --enable-empirical-fdr \
+  --null-replicates 1 \
+  --fdr-alpha 0.3 \
+  --enable-lncrna-context \
+  --enable-multi-way
 ```
 
-### Script Differences
-    
-**`context_dependent_analysis.py`** - **Full Analysis Pipeline**
+### Main outputs
 
-- Analyzes **ALL 36,084 genes** in the dataset
-- By default focuses on the **methylation–miRNA context module**, which empirical tests show has a clear separation between real and randomized data (stronger context_strength in real).
-- Optionally runs additional, more exploratory modules:
-  - **lncRNA–miRNA context** (`--enable-lncrna-context`)
-  - **multi-way interaction analysis** (`--enable-multi-way`)
-- Supports on-the-fly empirical FDR estimation against randomized null datasets via `--enable-empirical-fdr`.
-    
-**`subset_context_dependent_analysis.py`** - **Subset Analysis Tools**
+- **Core interaction table**: `methylation_mirna_context.csv`
+  - One row per gene–CpG–miRNA triplet.
+  - Contains:
+    - Regression metrics: `r2_regulator1_only`, `r2_regulator1_regulator2`, `r2_with_interaction`.
+    - Effect sizes: `improvement_from_regulator2`, `improvement_from_interaction`.
+    - Conditional correlations: `corr_high_regulator2`, `corr_low_regulator2`.
+    - **`context_strength`** quantifying change in correlation across contexts.
+    - When empirical FDR is enabled:
+      - `empirical_fdr_threshold`
+      - `empirical_fdr_estimated`
+      - `empirical_fdr_significant`
+  - **Primary table for downstream biological interpretation.**
 
-- Analyzes **500 genes** (randomly sampled from the full dataset)
-- Faster execution for testing and development
-- Lower computational requirements (\~5 min on 48 cores)
+- **Context correlation networks** (exploratory):
+  - `high_methylation_gene_methylation_correlations.csv`
+  - `high_methylation_gene_mirna_correlations.csv`
+  - `high_methylation_gene_lncrna_correlations.csv`
+  - `low_mirna_gene_methylation_correlations.csv`
+  - `low_mirna_gene_mirna_correlations.csv`
+  - `low_mirna_gene_lncrna_correlations.csv`
+  - Each row is a gene–regulator pair with Pearson `correlation` and raw `p_value` in a specific context (high methylation or low miRNA).
+  - Best used for **network-style exploration**; p-values are uncorrected and should not be treated as strict significance.
 
-### Empirically supported vs exploratory modules
+- **Reports**:
+  - `reports/context_dependent_analysis_report.md`
+  - `reports/context_dependent_analysis_report.html`
+  - Summarize:
+    - Dataset overview and resources used.
+    - Key methylation–miRNA context metrics (including empirical FDR if enabled).
+    - Status and top results for exploratory modules.
+    - A **“Table Definitions and Statistical Confidence”** section describing each major table and how to interpret its statistics.
 
-- **Empirically supported (core by default)**:
-  - **Methylation–miRNA context**: real data shows stronger baseline fits and higher `context_strength` than random, and works well with empirical FDR thresholding.
-- **Exploratory (opt-in via flags)**:
-  - **lncRNA–miRNA context** (`--enable-lncrna-context`):
-    - Baseline lncRNA→gene fits are strong in real data, but the *context* layer (interaction improvements, context_strength) behaves similarly or even more strongly under randomization.
-    - Treat the “context-dependent” flags here as exploratory unless the modeling is refined further.
-  - **Multi-way interactions** (`--enable-multi-way`):
-    - Currently produces large apparent improvements in both real and randomized data but almost no genes pass significance thresholds.
-    - Best viewed as an experimental module that may be disabled in most production runs.
+## 🔬 Statistical robustness of `context_dependent_analysis.py`
 
-## 🤝 Contributing
+### Empirically strong core: methylation–miRNA context
 
-We welcome contributions from the community! Whether you're a bioinformatician, data scientist, or developer, there are many ways to contribute:
+- **What is robust**:
+  - Across multiple real vs randomized comparisons, **methylation–miRNA context** shows:
+    - Higher baseline R² in real data (`r2_regulator1_only`, `r2_regulator1_regulator2`).
+    - Stronger gene–regulator correlations.
+    - Larger **`context_strength`** in real data than in randomized null runs.
+- **Empirical FDR**:
+  - The script can generate randomized null datasets by **shuffling samples within each feature**, preserving marginal distributions while destroying gene–regulator structure.
+  - It then estimates a context_strength threshold such that
+    \[
+    \widehat{\text{FDR}} \approx \frac{\text{null hits above threshold}}{\text{real hits above threshold}} \le q_{\text{target}}
+    \]
+  - Interactions with `empirical_fdr_significant == True` are those that pass this **data-driven FDR control** and are the most reliable candidates.
+- **Practical guidance**:
+  - For production analyses, enable:
+    - `--enable-empirical-fdr`
+    - A reasonable `--fdr-alpha` (e.g. 0.2–0.3 for exploratory, 0.1 for stricter).
+  - Focus interpretation on **FDR-significant rows** and use `context_strength` as the primary effect-size indicator.
 
-### How to Contribute
+### Exploratory components: lncRNA context and multi-way interactions
 
-1.  **Fork** the repository
-2.  **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3.  **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4.  **Push** to the branch (`git push origin feature/amazing-feature`)
-5.  **Open** a Pull Request
+- **lncRNA–miRNA context**:
+  - Baseline lncRNA→gene relationships are strong in real data.
+  - However, current context interaction metrics (additional improvements, `context_strength`) often look similar or even stronger in randomized data.
+  - Use this module to:
+    - Generate hypotheses about lncRNAs associated with genes that already have strong methylation–miRNA context.
+    - Explore ceRNA-like patterns that warrant external validation.
+
+- **Multi-way interactions**:
+  - Multi-regulator models can show large improvements in both real and randomized datasets.
+  - Few genes pass stringent significance thresholds, and null runs can exhibit similar improvement magnitudes.
+  - Treat these results as **hypothesis-generating only**, and always cross-check with simpler, better-behaved context metrics (especially methylation–miRNA context with empirical FDR).
+
+### Interpreting p-values vs empirical FDR
+
+- **F-test p-values** in the tables:
+  - Used internally for flags like `context_dependent` and `has_significant_interactions`.
+  - Useful but can be misleading when considered alone, because some apparent improvements also occur in randomized data.
+
+- **Empirical FDR** (recommended where available):
+  - Explicitly measures how often a metric as large as observed in real data appears in randomized null runs.
+  - Provides a more realistic sense of **false discovery rate** under the actual analysis pipeline and dataset structure.
+
+- **Correlation-network p-values**:
+  - In the high-/low-context correlation tables, p-values are uncorrected across many tests.
+  - Use them to **rank** gene–regulator pairs; rely on:
+    - Strong |correlation| values,
+    - Consistency across contexts,
+    - Overlap with FDR-supported interactions from `methylation_mirna_context.csv`.
+
+In summary, **methylation–miRNA context with empirical FDR** is the statistically most robust output of `context_dependent_analysis.py`, while other modules and correlation networks are preserved as clearly labeled exploratory tools for deeper biological investigation.
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License – see the `LICENSE` file for details.
 
 ## 🙏 Acknowledgments
 
--   **Steven Roberts** - Project maintainer and primary developer
--   **Open Source Community** - For the excellent libraries that make this project possible
--   **Contributors** - Everyone who has helped improve ConTra
+- **Steven Roberts** – project maintainer and primary developer  
+- **Open Source Community** – for the libraries that make this project possible  
+- **Contributors** – everyone who has helped improve ConTra
 
 ## 📞 Contact
 
--   **Issues**: [GitHub Issues](https://github.com/sr320/ConTra/issues)
--   **Discussions**: [GitHub Discussions](https://github.com/sr320/ConTra/discussions)
--   
+- **Issues**: GitHub Issues  
+- **Discussions**: GitHub Discussions
 
-------------------------------------------------------------------------
-
-**⭐ Star this repository if you find it useful!**
-
-**🤝 Contributions are always welcome and appreciated!**
