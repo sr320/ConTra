@@ -386,7 +386,11 @@ class OptimizedContextDependentRegulationAnalysis:
 
                 # Run only the context analyses needed for FDR (skip multi-way, networks)
                 meth_rand = self.parallel_analyze_methylation_mirna_context()
-                lncrna_rand = self.parallel_analyze_lncrna_mirna_context()
+                if self.enable_lncrna_context:
+                    lncrna_rand = self.parallel_analyze_lncrna_mirna_context()
+                else:
+                    print("  ⏭️ Skipping lncRNA context in empirical FDR (disabled).")
+                    lncrna_rand = pd.DataFrame()
 
                 random_results_per_replicate.append(
                     {
