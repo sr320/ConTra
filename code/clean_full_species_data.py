@@ -264,7 +264,12 @@ def main():
     print(f"Writing cleaned outputs to: {out_dir}")
     summaries = write_outputs(out_dir, dfs)
 
-    print("\nSummary:\n" + "\n".join([f"- {k}: {v.splitlines()[1]}{v.splitlines()[2]}{v.splitlines()[3]}" for k, v in summaries.items()]))
+    summary_lines = []
+    for k, v in summaries.items():
+        lines = v.splitlines()
+        detail = " ".join(lines[1:4])
+        summary_lines.append(f"- {k}: {detail}")
+    print("\nSummary:\n" + "\n".join(summary_lines))
     print("\nDone.")
 
 
