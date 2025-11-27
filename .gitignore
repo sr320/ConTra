@@ -178,3 +178,6 @@ output
 
 
 data/full*/*WGBS*
+.Rhistory
+# R / RStudio project files
+*.Rproj

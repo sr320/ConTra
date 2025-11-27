@@ -1,4 +1,4 @@
-## ConTra: Context-Dependent Regulation Analysis
+## ConTra: Context-Dependent Transcriptome Regulation Analysis
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/) [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](CONTRIBUTING.md)
 
@@ -237,4 +237,3 @@ This project is licensed under the MIT License – see the `LICENSE` file for de
 
 - **Issues**: GitHub Issues  
 - **Discussions**: GitHub Discussions
-
