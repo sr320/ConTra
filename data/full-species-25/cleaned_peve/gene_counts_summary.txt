@@ -1,0 +1,4 @@
+Dataset: gene
+Features: 36250
+Samples: 36
+Sparsity: 36.09%
