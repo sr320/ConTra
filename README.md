@@ -180,9 +180,13 @@ python code/context_dependent_analysis.py \
 - **Empirical FDR**:
   - The script can generate randomized null datasets by **shuffling samples within each feature**, preserving marginal distributions while destroying gene–regulator structure.
   - It then estimates a context_strength threshold such that
-    \[
-    \widehat{\text{FDR}} \approx \frac{\text{null hits above threshold}}{\text{real hits above threshold}} \le q_{\text{target}}
-    \]
+
+$$
+\widehat{\mathrm{FDR}} \approx
+\frac{\text{null hits above threshold}}{\text{real hits above threshold}}
+\le q_{\text{target}}
+$$
+
   - Interactions with `empirical_fdr_significant == True` are those that pass this **data-driven FDR control** and are the most reliable candidates.
 - **Practical guidance**:
   - For production analyses, enable:
