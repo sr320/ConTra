@@ -74,6 +74,41 @@ python code/context_dependent_analysis.py --data-dir data/full-species-24/cleane
 
 Each invocation produces its own timestamped output folder under `output/`.
 
+### Cross-Species Comparison (Biomin Data)
+
+For analyzing multiple species and comparing context-dependent regulation patterns across orthologous genes (OG IDs), use the dedicated comparison script:
+
+```bash
+# Run analysis on all three species and compare results
+python code/run_biomin_species_comparison.py
+
+# Skip re-running analysis and use existing outputs
+python code/run_biomin_species_comparison.py --skip-analysis
+
+# Specify exact output directories for each species
+python code/run_biomin_species_comparison.py --species-outputs \
+    output/context_dependent_analysis_YYYYMMDD_HHMMSS_apul \
+    output/context_dependent_analysis_YYYYMMDD_HHMMSS_peve \
+    output/context_dependent_analysis_YYYYMMDD_HHMMSS_ptua
+```
+
+This script:
+1. Runs `context_dependent_analysis.py` on all species in `data/full-species-biomin/`
+2. Extracts `OG_XXXXX` orthologous group IDs from results
+3. Identifies conserved regulatory patterns (same OG in multiple species)
+4. Generates comparison tables and visualizations
+
+**Output files** (in `output/biomin_comparison_TIMESTAMP/`):
+- `cross_species_methylation_mirna_comparison.csv` - Full comparison of context metrics by OG
+- `plots/species_comparison_overview.png` - Visualization of cross-species patterns
+- `cross_species_comparison_report.md` - Summary report with top conserved OGs
+
+**Key columns in comparison table**:
+- `og_id` - Orthologous group identifier (shared across species)
+- `n_species` - Number of species where this OG shows context-dependent regulation
+- `mean_context_strength` - Average context strength across species
+- `{species}_context_strength` - Per-species context strength values
+
 ### Running on your own data
 
 To use your own multi-omics data, prepare a directory that contains **four CSV files** with **identical sample columns**:
@@ -149,14 +184,28 @@ python code/context_dependent_analysis.py \
       - `empirical_fdr_significant`
   - **Primary table for downstream biological interpretation.**
 
-- **Context correlation networks** (exploratory):
-  - `high_methylation_gene_methylation_correlations.csv`
-  - `high_methylation_gene_mirna_correlations.csv`
-  - `high_methylation_gene_lncrna_correlations.csv`
-  - `low_mirna_gene_methylation_correlations.csv`
-  - `low_mirna_gene_mirna_correlations.csv`
-  - `low_mirna_gene_lncrna_correlations.csv`
-  - Each row is a gene–regulator pair with Pearson `correlation` and raw `p_value` in a specific context (high methylation or low miRNA).
+- **Context-specific regulatory networks** (exploratory):
+  - The analysis infers regulatory relationships **within specific biological contexts** rather than across all samples. This identifies correlations that may only exist (or be stronger) under certain cellular states.
+  - **Three contexts are analyzed**:
+    - **`high_mirna`**: Samples where a sentinel miRNA has high expression (z-score > 0.5)
+    - **`low_mirna`**: Samples where that miRNA has low expression (z-score < -0.5)
+    - **`high_methylation`**: Samples where a sentinel CpG site has high methylation (z-score > 0.5)
+  - **For each context**, the analysis:
+    1. Filters samples matching the context criteria
+    2. Computes Pearson correlations between each gene and all miRNAs, lncRNAs, and methylation sites
+    3. Retains correlations with p-value < 0.1
+  - **Output files**:
+    - `high_mirna_gene_mirna_correlations.csv`
+    - `high_mirna_gene_lncrna_correlations.csv`
+    - `high_mirna_gene_methylation_correlations.csv`
+    - `low_mirna_gene_mirna_correlations.csv`
+    - `low_mirna_gene_lncrna_correlations.csv`
+    - `low_mirna_gene_methylation_correlations.csv`
+    - `high_methylation_gene_mirna_correlations.csv`
+    - `high_methylation_gene_lncrna_correlations.csv`
+    - `high_methylation_gene_methylation_correlations.csv`
+  - Each row is a gene–regulator pair with Pearson `correlation` and raw `p_value` computed **only within that context's samples**.
+  - **Biological rationale**: Regulatory relationships may differ depending on cellular state. For example, a gene might be strongly regulated by a methylation site only when miRNA levels are low (if the miRNA normally represses this effect). Correlations present in one context but absent in another suggest context-dependent regulation.
   - Best used for **network-style exploration**; p-values are uncorrected and should not be treated as strict significance.
 
 - **Reports**:

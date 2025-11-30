@@ -15,6 +15,10 @@ Methods used:
 - Context-specific regulatory network inference (optimized)
 """
 
+# FIXED: Configure matplotlib for headless environments BEFORE importing pyplot
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for headless environments
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,28 +26,18 @@ import seaborn as sns
 from scipy import stats
 from scipy.stats import pearsonr
 from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, mean_squared_error
 import warnings
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from functools import partial
 import os
-import gc
 import time
 import base64
 from datetime import datetime
 from typing import Dict, List, Tuple, Any, Optional
+import re
 
-# FIXED: Ensure pandas is available for NaN handling
-import pandas as pd
 warnings.filterwarnings('ignore')
-
-# FIXED: Configure matplotlib for headless environments
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend for headless environments
 
 # Set plotting style
 plt.style.use('seaborn-v0_8')
@@ -204,11 +198,19 @@ class OptimizedContextDependentRegulationAnalysis:
         self.n_samples = len(self.samples)
         print(f"✓ All datasets aligned with {self.n_samples} samples")
         
-        # Extract time points and conditions
-        self.time_points = sorted(list(set([s.split('-')[-1] for s in self.samples])))
-        self.conditions = sorted(list(set([s.split('-')[1] for s in self.samples])))
-        print(f"Time points: {self.time_points}")
-        print(f"Conditions: {self.conditions}")
+        # Extract time points and conditions (with error handling for different sample formats)
+        try:
+            self.time_points = sorted(list(set([s.split('-')[-1] for s in self.samples if '-' in s])))
+            self.conditions = sorted(list(set([s.split('-')[1] for s in self.samples if s.count('-') >= 2])))
+        except (IndexError, ValueError):
+            self.time_points = []
+            self.conditions = []
+            print("⚠️  Could not parse time points and conditions from sample names")
+        
+        if self.time_points:
+            print(f"Time points: {self.time_points}")
+        if self.conditions:
+            print(f"Conditions: {self.conditions}")
 
     def analyze_context_dependent_regulation(self):
         """Main analysis for context-dependent regulation using parallel processing."""
@@ -298,12 +300,12 @@ class OptimizedContextDependentRegulationAnalysis:
         rand = pd.Series(random_values).dropna().astype(float)
 
         if real.empty or rand.empty:
-            return None, None
+            return (None, None)
 
         n_real = len(real)
         n_rand = len(rand)
         if n_rand == 0:
-            return None, None
+            return (None, None)
 
         scale = n_real / n_rand
 
@@ -316,9 +318,9 @@ class OptimizedContextDependentRegulationAnalysis:
             V = (rand > t).sum() * scale
             fdr = V / R
             if fdr <= q_target:
-                return float(t), float(fdr)
+                return (float(t), float(fdr))
 
-        return None, None
+        return (None, None)
 
     def _apply_empirical_fdr_to_results(self, random_results: Dict[str, pd.DataFrame]) -> None:
         """Apply empirical FDR thresholding to context-dependent results."""
@@ -505,12 +507,20 @@ class OptimizedContextDependentRegulationAnalysis:
         return correlations[:top_n]
         
     def _analyze_methylation_mirna_interaction(self, gene_name: str, gene_expression: np.ndarray, 
-                                             mirna_name: str, meth_name: str) -> Dict:
+                                             mirna_name: str, meth_name: str) -> Optional[Dict]:
         """Analyze interaction between methylation and miRNA for a specific gene."""
         try:
-            # Get regulator data
-            mirna_data = self.datasets['mirna'].loc[mirna_name.replace('mirna_', '')].values
-            meth_data = self.datasets['methylation'].loc[meth_name.replace('methylation_', '')].values
+            # Get regulator data with validation
+            mirna_key = mirna_name.replace('mirna_', '')
+            meth_key = meth_name.replace('methylation_', '')
+            
+            if mirna_key not in self.datasets['mirna'].index:
+                return None
+            if meth_key not in self.datasets['methylation'].index:
+                return None
+                
+            mirna_data = self.datasets['mirna'].loc[mirna_key].values
+            meth_data = self.datasets['methylation'].loc[meth_key].values
             
             # Create interaction dataset
             data = pd.DataFrame({
@@ -544,17 +554,13 @@ class OptimizedContextDependentRegulationAnalysis:
             improvement_from_regulator2 = r2_2 - r2_1
             improvement_from_interaction = r2_3 - r2_2
             
-            # FIXED: Use proper statistical testing instead of arbitrary R^2 threshold
             # Perform nested F-test to compare models with and without interaction
-            from sklearn.metrics import r2_score
-            from scipy import stats
-            
             # Calculate F-statistic for nested model comparison
             n_samples = len(data_scaled)
             df1 = 1  # Additional parameter in full model
             df2 = n_samples - 4  # Degrees of freedom for full model (4 parameters)
             
-            # FIXED: Add proper error handling for edge cases
+            # Add proper error handling for edge cases
             if (df2 > 0 and 
                 improvement_from_interaction > 0 and 
                 r2_3 < 1.0 and  # Prevent division by zero when R² = 1
@@ -686,12 +692,20 @@ class OptimizedContextDependentRegulationAnalysis:
         return results
         
     def _analyze_lncrna_mirna_interaction(self, gene_name: str, gene_expression: np.ndarray, 
-                                         lncrna_name: str, mirna_name: str) -> Dict:
+                                         lncrna_name: str, mirna_name: str) -> Optional[Dict]:
         """Analyze interaction between lncRNA and miRNA for a specific gene."""
         try:
-            # Get regulator data
-            lncrna_data = self.datasets['lncrna'].loc[lncrna_name.replace('lncrna_', '')].values
-            mirna_data = self.datasets['mirna'].loc[mirna_name.replace('mirna_', '')].values
+            # Get regulator data with validation
+            lncrna_key = lncrna_name.replace('lncrna_', '')
+            mirna_key = mirna_name.replace('mirna_', '')
+            
+            if lncrna_key not in self.datasets['lncrna'].index:
+                return None
+            if mirna_key not in self.datasets['mirna'].index:
+                return None
+                
+            lncrna_data = self.datasets['lncrna'].loc[lncrna_key].values
+            mirna_data = self.datasets['mirna'].loc[mirna_key].values
             
             # Create interaction dataset
             data = pd.DataFrame({
@@ -725,17 +739,13 @@ class OptimizedContextDependentRegulationAnalysis:
             improvement_from_regulator2 = r2_2 - r2_1
             improvement_from_interaction = r2_3 - r2_2
             
-            # FIXED: Use proper statistical testing instead of arbitrary R^2 threshold
             # Perform nested F-test to compare models with and without interaction
-            from sklearn.metrics import r2_score
-            from scipy import stats
-            
             # Calculate F-statistic for nested model comparison
             n_samples = len(data_scaled)
             df1 = 1  # Additional parameter in full model
             df2 = n_samples - 4  # Degrees of freedom for full model (4 parameters)
             
-            # FIXED: Add proper error handling for edge cases
+            # Add proper error handling for edge cases
             if (df2 > 0 and 
                 improvement_from_interaction > 0 and 
                 r2_3 < 1.0 and  # Prevent division by zero when R² = 1
@@ -770,7 +780,7 @@ class OptimizedContextDependentRegulationAnalysis:
             else:
                 corr_high_mirna = corr_low_mirna = context_strength = np.nan
             
-            # FIXED: Handle NaN values in context direction
+            # Handle NaN values in context direction
             if pd.isna(corr_high_mirna) or pd.isna(corr_low_mirna):
                 context_direction = 'NA'
                 context_strength = np.nan
@@ -785,6 +795,7 @@ class OptimizedContextDependentRegulationAnalysis:
                 'r2_regulator1_only': r2_1,
                 'r2_regulator1_regulator2': r2_2,
                 'r2_with_interaction': r2_3,
+                'improvement_from_regulator2': improvement_from_regulator2,
                 'improvement_from_interaction': improvement_from_interaction,
                 'context_dependent': context_dependent,
                 'corr_high_regulator2': corr_high_mirna,
@@ -927,17 +938,13 @@ class OptimizedContextDependentRegulationAnalysis:
             # Calculate improvement
             improvement_from_regulators = r2_full - r2_base
             
-            # FIXED: Use proper statistical testing instead of arbitrary R^2 threshold
             # Perform nested F-test to compare base vs full model
-            from sklearn.metrics import r2_score
-            from scipy import stats
-            
             # Calculate F-statistic for nested model comparison
             n_samples = len(data_scaled)
             df1 = len(regulators) - 1  # Additional parameters in full model
             df2 = n_samples - len(regulators) - 1  # Degrees of freedom for full model
             
-            # FIXED: Add proper error handling for edge cases
+            # Add proper error handling for edge cases
             if (df2 > 0 and 
                 improvement_from_regulators > 0 and 
                 r2_full < 1.0 and  # Prevent division by zero when R² = 1
@@ -982,28 +989,20 @@ class OptimizedContextDependentRegulationAnalysis:
             ('high_methylation', 0.5)
         ]
         
-        # Process all contexts in parallel
-        with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
-            future_to_context = {
-                executor.submit(self._analyze_context_network_parallel, context_name, threshold): context_name
-                for context_name, threshold in contexts_to_analyze
-            }
+        # Process contexts sequentially to avoid nested ProcessPoolExecutor issues
+        for context_name, threshold in contexts_to_analyze:
+            try:
+                context_result = self._analyze_context_network_parallel(context_name, threshold)
+                context_networks[context_name] = context_result
+                print(f"    ✅ {context_name} context analysis completed")
+            except Exception as exc:
+                print(f"    ❌ {context_name} context analysis failed: {exc}")
+                context_networks[context_name] = {
+                    'gene_mirna_correlations': [],
+                    'gene_lncrna_correlations': [],
+                    'gene_methylation_correlations': []
+                }
             
-            # Collect results as they complete
-            for future in as_completed(future_to_context):
-                context_name = future_to_context[future]
-                try:
-                    context_result = future.result()
-                    context_networks[context_name] = context_result
-                    print(f"    ✅ {context_name} context analysis completed")
-                except Exception as exc:
-                    print(f"    ❌ {context_name} context analysis failed: {exc}")
-                    context_networks[context_name] = {
-                        'gene_mirna_correlations': [],
-                        'gene_lncrna_correlations': [],
-                        'gene_methylation_correlations': []
-                    }
-        
         return context_networks
         
     def _analyze_context_network_parallel(self, context_name: str, threshold: float) -> Dict:
@@ -1020,7 +1019,10 @@ class OptimizedContextDependentRegulationAnalysis:
         n_genes = len(self.datasets['gene'])  # Use all 36,084 genes
         sampled_genes = self.datasets['gene'].index  # Use all genes, not random sample
         
-        # FIXED: Get context mask based on per-sample context variables, not features
+        # Get context mask based on per-sample context variables
+        # Use median split as fallback if z-score thresholds yield too few samples
+        min_samples_required = 5  # Minimum samples needed for correlation
+        
         if 'high_mirna' in context_name or 'low_mirna' in context_name:
             # Sentinel miRNA approach: use first miRNA as context proxy
             sentinel_mirna = self.datasets['mirna'].index[0]
@@ -1029,15 +1031,29 @@ class OptimizedContextDependentRegulationAnalysis:
             
             if threshold > 0:  # high_mirna
                 context_mask = z_scores > threshold
+                # Fallback to median split if not enough samples
+                if context_mask.sum() < min_samples_required:
+                    median_val = np.median(z_scores)
+                    context_mask = z_scores > median_val
+                    print(f"      ⚠️ Using median split for {context_name} (z>{threshold:.1f} had only {(z_scores > threshold).sum()} samples)")
             else:  # low_mirna
-                context_mask = z_scores < abs(threshold)
+                context_mask = z_scores < threshold
+                # Fallback to median split if not enough samples
+                if context_mask.sum() < min_samples_required:
+                    median_val = np.median(z_scores)
+                    context_mask = z_scores < median_val
+                    print(f"      ⚠️ Using median split for {context_name} (z<{threshold:.1f} had only {(z_scores < threshold).sum()} samples)")
                 
         elif 'high_methylation' in context_name:
-            # FIXED: Implement methylation-based context
             sentinel_cpg = self.datasets['methylation'].index[0]
             meth_values = self.datasets['methylation'].loc[sentinel_cpg].values
             z_scores = StandardScaler().fit_transform(meth_values.reshape(-1, 1)).ravel()
             context_mask = z_scores > threshold
+            # Fallback to median split if not enough samples
+            if context_mask.sum() < min_samples_required:
+                median_val = np.median(z_scores)
+                context_mask = z_scores > median_val
+                print(f"      ⚠️ Using median split for {context_name} (z>{threshold:.1f} had only {(z_scores > threshold).sum()} samples)")
             
         else:
             # Fallback: use time/treatment metadata if available
@@ -1046,7 +1062,10 @@ class OptimizedContextDependentRegulationAnalysis:
         # Filter samples by context
         context_samples = [col for i, col in enumerate(self.datasets['gene'].columns) if context_mask[i]]
         
-        if len(context_samples) < 10:
+        print(f"      📊 {context_name}: {len(context_samples)} samples selected")
+        
+        if len(context_samples) < min_samples_required:
+            print(f"      ⚠️ Skipping {context_name}: only {len(context_samples)} samples (need ≥{min_samples_required})")
             return context_networks  # Not enough samples for this context
         
         # Split genes into chunks for parallel processing
@@ -1669,7 +1688,7 @@ class OptimizedContextDependentRegulationAnalysis:
         
         # Summary of methylation-miRNA context
         meth_mirna = self.results['context_dependent']['methylation_mirna_context']
-        if not meth_mirna.empty:
+        if isinstance(meth_mirna, pd.DataFrame) and not meth_mirna.empty:
             print(f"\nMETHYLATION-MIRNA CONTEXT ANALYSIS:")
             print(f"  Total interactions analyzed: {len(meth_mirna)}")
             print(f"  Context-dependent interactions: {meth_mirna['context_dependent'].sum()}")
@@ -1678,7 +1697,7 @@ class OptimizedContextDependentRegulationAnalysis:
         
         # Summary of lncRNA-miRNA context
         lncrna_mirna = self.results['context_dependent']['lncrna_mirna_context']
-        if not lncrna_mirna.empty:
+        if isinstance(lncrna_mirna, pd.DataFrame) and not lncrna_mirna.empty:
             print(f"\nLNCRNA-MIRNA CONTEXT ANALYSIS:")
             print(f"  Total interactions analyzed: {len(lncrna_mirna)}")
             print(f"  Context-dependent interactions: {lncrna_mirna['context_dependent'].sum()}")
@@ -1687,7 +1706,7 @@ class OptimizedContextDependentRegulationAnalysis:
         
         # Summary of multi-way interactions
         multi_way = self.results['context_dependent']['multi_way_interactions']
-        if not multi_way.empty:
+        if isinstance(multi_way, pd.DataFrame) and not multi_way.empty:
             print(f"\nMULTI-WAY INTERACTION ANALYSIS:")
             print(f"  Total genes analyzed: {len(multi_way)}")
             print(f"  Genes with significant interactions: {multi_way['has_significant_interactions'].sum()}")
