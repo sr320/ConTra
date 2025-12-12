@@ -7,3 +7,6 @@ scikit-learn>=1.0.0
 psutil>=5.8.0
 joblib>=1.1.0
 tqdm>=4.62.0
+
+# Optional GPU dependencies (install via conda for RAPIDS)
+# See requirements-gpu.txt for GPU-specific installation instructions

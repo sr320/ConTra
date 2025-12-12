@@ -1,0 +1,46 @@
+# GPU Requirements for Context-Dependent Analysis
+# ================================================
+# 
+# RAPIDS requires conda installation. Use the following command:
+#
+# conda install -c rapidsai -c conda-forge -c nvidia rapids=24.10 python=3.11 cuda-version=12.0
+#
+# Or for specific components:
+#
+# conda install -c rapidsai -c conda-forge -c nvidia \
+#     cudf=24.10 \
+#     cuml=24.10 \
+#     cupy \
+#     python=3.11 \
+#     cuda-version=12.0
+#
+# ================================================
+# 
+# Minimum Requirements:
+# - NVIDIA GPU with CUDA Compute Capability >= 6.0
+# - CUDA Toolkit 11.2+ or 12.0+
+# - 8GB+ GPU Memory recommended
+#
+# ================================================
+
+# Base requirements (same as requirements.txt)
+pandas>=1.3.0
+numpy>=1.21.0
+matplotlib>=3.4.0
+seaborn>=0.11.0
+scipy>=1.7.0
+scikit-learn>=1.0.0
+psutil>=5.8.0
+joblib>=1.1.0
+tqdm>=4.62.0
+
+# GPU packages (install via conda, not pip)
+# cudf>=24.10        # GPU DataFrame library
+# cuml>=24.10        # GPU Machine Learning library
+# cupy>=13.0         # GPU NumPy-like library
+
+# Alternative: Install CuPy via pip for basic GPU acceleration
+# (Not a full replacement for RAPIDS, but provides GPU array operations)
+# cupy-cuda12x>=13.0  # For CUDA 12.x
+# cupy-cuda11x>=13.0  # For CUDA 11.x
+
